@@ -6,10 +6,66 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
-private let nowDragUTTypes: [UTType] = [.plainText, .text]
+/// Shared mutable drag state passed by reference to all drop delegates so they always see current values.
+private final class NowDragState: ObservableObject {
+    @Published var draggedID: UUID?
+    @Published var hoverTargetID: UUID?
+    @Published var hoverIsEnd = false
+
+    func reset() {
+        draggedID = nil
+        hoverTargetID = nil
+        hoverIsEnd = false
+    }
+}
+
+private struct NowDropLine: View {
+    var body: some View {
+        Rectangle()
+            .fill(TurboTheme.accent)
+            .frame(height: 2)
+            .frame(maxWidth: .infinity)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+private enum NowScrollSpace {
+    static let name = "NowScrollSpace"
+}
+
+private struct NowTaskFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct NowTaskFrameReporter: ViewModifier {
+    let taskID: UUID
+
+    func body(content: Content) -> some View {
+        content.background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: NowTaskFramePreferenceKey.self,
+                    value: [taskID: proxy.frame(in: .named(NowScrollSpace.name))]
+                )
+            }
+        )
+    }
+}
+
+private extension View {
+    func nowTaskFrameReporter(taskID: UUID) -> some View {
+        modifier(NowTaskFrameReporter(taskID: taskID))
+    }
+}
 
 /// Mutable flags read from the key-event monitor (must be a reference type).
 private final class NowKeyboardGate {
@@ -22,6 +78,7 @@ private final class NowKeyboardGate {
 struct NowView: View {
     @EnvironmentObject private var store: TurboTaskStore
 
+    @AppStorage("now_list_grouping_mode") private var listGroupingRawValue = NowListGroupingMode.none.rawValue
     @State private var viewMode: NowBoardMode = .list
     @State private var editingTask: TaskContext?
     @State private var quickCreateExpanded = false
@@ -29,6 +86,9 @@ struct NowView: View {
     @State private var quickCreateScheduleForNow = true
     @State private var keyboardGate = NowKeyboardGate()
     @State private var localKeyMonitor: Any?
+    @State private var localScrollMonitor: Any?
+    @State private var visibleTaskFrames: [UUID: CGRect] = [:]
+    @State private var pendingSelectionRevealAnimated: Bool?
 
     private var weekdayTitle: String {
         Date.now.formatted(.dateTime.weekday(.wide))
@@ -67,114 +127,165 @@ struct NowView: View {
         }
     }
 
+    private var listGrouping: NowListGroupingMode {
+        NowListGroupingMode(rawValue: listGroupingRawValue) ?? .none
+    }
+
+    private var listGroupingBinding: Binding<NowListGroupingMode> {
+        Binding(
+            get: { listGrouping },
+            set: { listGroupingRawValue = $0.rawValue }
+        )
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                TurboPageHeader(
-                    title: "Now",
-                    trailing: AnyView(
-                        Picker("View", selection: $viewMode) {
-                            ForEach(NowBoardMode.allCases) { mode in
-                                Label(mode.title, systemImage: mode.symbol)
-                                    .tag(mode)
+        GeometryReader { viewport in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .center, spacing: 10) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("Now")
+                                    .font(.system(size: 22, weight: .semibold))
+                                    .foregroundStyle(TurboTheme.ink)
+                                Text("\(weekdayTitle) · \(dateTitle)")
+                                    .font(.subheadline)
+                                    .foregroundStyle(TurboTheme.mutedInk)
                             }
+                            Spacer(minLength: 8)
+                            Picker("View", selection: $viewMode) {
+                                ForEach(NowBoardMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .controlSize(.small)
+                            .frame(width: 148)
+                            .trainingWheelsTooltip("List vs tree · ⇧⌘L")
+
+                            Picker("Group", selection: listGroupingBinding) {
+                                ForEach(NowListGroupingMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .controlSize(.small)
+                            .frame(width: 132)
+                            .disabled(viewMode != .list)
+                            .help("Optional grouping for the list view.")
+                            .trainingWheelsTooltip("Grouping for list view · ⌥⌘0 off · ⌥⌘J jobs · ⌥⌘G jobs + projects")
                         }
-                        .pickerStyle(.segmented)
-                        .controlSize(.small)
-                        .frame(width: 192)
-                        .trainingWheelsTooltip("List vs tree · ⇧⌘L")
-                    )
-                )
 
-                TodayScopeBar(
-                    weekdayTitle: weekdayTitle,
-                    dateTitle: dateTitle,
-                    visibleJobs: store.visibleNowJobs,
-                    visibleProjects: store.visibleNowProjects,
-                    availableJobChoices: availableJobChoices,
-                    availableProjectChoices: availableProjectChoices
-                )
-                .environmentObject(store)
+                        TodayScopeBar(
+                            visibleJobs: store.visibleNowJobs,
+                            visibleProjects: store.visibleNowProjects,
+                            availableJobChoices: availableJobChoices,
+                            availableProjectChoices: availableProjectChoices
+                        )
+                        .environmentObject(store)
 
-                if !upcomingRepeatables.isEmpty {
-                    ReturningLaterCard(tasks: upcomingRepeatables)
+                        if !upcomingRepeatables.isEmpty {
+                            ReturningLaterCard(tasks: upcomingRepeatables, onEditTask: { editingTask = $0 })
+                                .environmentObject(store)
+                        }
+
+                        NowQuickCreateBar(isExpanded: $quickCreateExpanded, scheduleForNow: $quickCreateScheduleForNow)
+                            .environmentObject(store)
+
+                        TrainingWheelsHint(text: "⌘N or ⇧⌘A toggles quick add · Esc closes · With the bar open, ⌘T toggles Schedule for Now.")
+                            .padding(.top, -2)
+
+                        let scoped = store.scopedNowTasks
+                        switch viewMode {
+                        case .list:
+                            ListBoard(
+                                tasks: scoped,
+                                grouping: listGrouping,
+                                onEditTask: { editingTask = $0 }
+                            )
+                            .environmentObject(store)
+                        case .tree:
+                            NowTreeWithDoneSection(
+                                openTasks: scoped.filter { $0.task.status != .done },
+                                doneTasks: scoped.filter { $0.task.status == .done },
+                                treeGroups: store.nowTreeGroups,
+                                onEditTask: { editingTask = $0 }
+                            )
+                            .environmentObject(store)
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 16)
                 }
-
-                NowQuickCreateBar(isExpanded: $quickCreateExpanded, scheduleForNow: $quickCreateScheduleForNow)
-                    .environmentObject(store)
-                    .padding(.bottom, 6)
-
-                TrainingWheelsHint(text: "⌘N or ⇧⌘A toggles quick add · Esc closes · With the bar open, ⌘T toggles Schedule for Now.")
-                    .padding(.bottom, 2)
-
-                switch viewMode {
-                case .list:
-                    ListBoard(
-                        tasks: store.scopedNowTasks,
-                        onEditTask: { editingTask = $0 }
-                    )
-                    .environmentObject(store)
-                case .tree:
-                    NowTreeWithDoneSection(
-                        openTasks: store.scopedNowTasks.filter { $0.task.status != .done },
-                        doneTasks: store.scopedNowTasks.filter { $0.task.status == .done },
-                        treeGroups: store.nowTreeGroups,
-                        onEditTask: { editingTask = $0 }
-                    )
-                    .environmentObject(store)
+                .coordinateSpace(name: NowScrollSpace.name)
+                .scrollIndicators(.hidden)
+                .onAppear {
+                    keyboardGate.taskEditorOpen = editingTask != nil
+                    keyboardGate.quickCreateExpanded = quickCreateExpanded
+                    keyboardGate.toggleQuickCreateScheduleForNow = { quickCreateScheduleForNow.toggle() }
+                    installNowLocalKeyMonitor()
+                    installNowLocalScrollMonitor()
+                    _Concurrency.Task { @MainActor in
+                        store.ensureSelection()
+                        requestSelectionReveal(animated: false)
+                        flushPendingSelectionReveal(using: proxy, viewportHeight: viewport.size.height)
+                    }
+                }
+                .onDisappear {
+                    removeNowLocalKeyMonitor()
+                    removeNowLocalScrollMonitor()
+                }
+                .onPreferenceChange(NowTaskFramePreferenceKey.self) { frames in
+                    visibleTaskFrames = frames
+                    flushPendingSelectionReveal(using: proxy, viewportHeight: viewport.size.height)
+                }
+                .onChange(of: editingTask) { _, newValue in
+                    keyboardGate.taskEditorOpen = newValue != nil
+                }
+                .onChange(of: quickCreateExpanded) { _, expanded in
+                    keyboardGate.quickCreateExpanded = expanded
+                }
+                .onChange(of: store.selection) { _, _ in
+                    flushPendingSelectionReveal(using: proxy, viewportHeight: viewport.size.height)
+                }
+                .onChange(of: store.nowShortcutAction) { _, action in
+                    guard let action else { return }
+                    _Concurrency.Task { @MainActor in
+                        store.clearNowShortcutAction()
+                        switch action {
+                        case .focusQuickAdd:
+                            quickCreateExpanded.toggle()
+                        case .toggleViewMode:
+                            viewMode = viewMode == .list ? .tree : .list
+                        case .setListGrouping(let grouping):
+                            listGroupingRawValue = grouping.rawValue
+                        case .openEditorForSelection:
+                            openEditorForSelection()
+                        case .startSelectedTask:
+                            applyToSelectedTask { store.setTaskStatus($0, status: .active) }
+                        case .pauseSelectedTask:
+                            applyToSelectedTask { store.setTaskStatus($0, status: .paused) }
+                        case .markSelectedDone:
+                            requestSelectionReveal(animated: true)
+                            applyToSelectedTask { store.setTaskStatus($0, status: .done) }
+                        case .markSelectedWaiting:
+                            applyToSelectedTask { store.setTaskStatus($0, status: .waiting) }
+                        }
+                    }
+                }
+                .onKeyPress(.escape) {
+                    if quickCreateExpanded {
+                        quickCreateExpanded = false
+                        return .handled
+                    }
+                    return .ignored
+                }
+                .sheet(item: $editingTask) { context in
+                    TaskEditorDialog(context: context)
+                        .environmentObject(store)
+                        .frame(minWidth: 760, idealWidth: 840, minHeight: 620, idealHeight: 700)
                 }
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 20)
-        }
-        .scrollIndicators(.hidden)
-        .onAppear {
-            keyboardGate.taskEditorOpen = editingTask != nil
-            keyboardGate.quickCreateExpanded = quickCreateExpanded
-            keyboardGate.toggleQuickCreateScheduleForNow = { quickCreateScheduleForNow.toggle() }
-            store.ensureSelection()
-            installNowLocalKeyMonitor()
-        }
-        .onDisappear {
-            removeNowLocalKeyMonitor()
-        }
-        .onChange(of: editingTask) { _, newValue in
-            keyboardGate.taskEditorOpen = newValue != nil
-        }
-        .onChange(of: quickCreateExpanded) { _, expanded in
-            keyboardGate.quickCreateExpanded = expanded
-        }
-        .onChange(of: store.nowShortcutAction, initial: true) { _, action in
-            guard let action else { return }
-            defer { store.clearNowShortcutAction() }
-            switch action {
-            case .focusQuickAdd:
-                quickCreateExpanded.toggle()
-            case .toggleViewMode:
-                viewMode = viewMode == .list ? .tree : .list
-            case .openEditorForSelection:
-                openEditorForSelection()
-            case .startSelectedTask:
-                applyToSelectedTask { store.setTaskStatus($0, status: .active) }
-            case .pauseSelectedTask:
-                applyToSelectedTask { store.setTaskStatus($0, status: .paused) }
-            case .markSelectedDone:
-                applyToSelectedTask { store.setTaskStatus($0, status: .done) }
-            case .markSelectedWaiting:
-                applyToSelectedTask { store.setTaskStatus($0, status: .waiting) }
-            }
-        }
-        .onKeyPress(.escape) {
-            if quickCreateExpanded {
-                quickCreateExpanded = false
-                return .handled
-            }
-            return .ignored
-        }
-        .sheet(item: $editingTask) { context in
-            TaskEditorDialog(context: context)
-                .environmentObject(store)
-                .frame(minWidth: 760, idealWidth: 840, minHeight: 620, idealHeight: 700)
         }
     }
 
@@ -193,10 +304,55 @@ struct NowView: View {
         action(context)
     }
 
+    private func scrollSelectionIntoView(
+        using proxy: ScrollViewProxy,
+        viewportHeight: CGFloat,
+        animated: Bool = true
+    ) -> Bool {
+        guard store.selectedScreen == .now else { return true }
+        guard case let .task(jobID, projectID, taskID) = store.selection else { return true }
+        let isVisibleNowTask = store.scopedNowTasks.contains {
+            $0.task.id == taskID && $0.jobID == jobID && $0.projectID == projectID
+        }
+        guard isVisibleNowTask else { return true }
+        guard let frame = visibleTaskFrames[taskID], viewportHeight > 1 else { return false }
+
+        let topMargin: CGFloat = 12
+        let bottomMargin: CGFloat = 18
+        guard frame.minY < topMargin || frame.maxY > viewportHeight - bottomMargin else { return true }
+        let anchor: UnitPoint = frame.minY < topMargin ? .top : .bottom
+
+        _Concurrency.Task { @MainActor in
+            if animated {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    proxy.scrollTo(taskID, anchor: anchor)
+                }
+            } else {
+                proxy.scrollTo(taskID, anchor: anchor)
+            }
+        }
+        return true
+    }
+
+    private func requestSelectionReveal(animated: Bool) {
+        pendingSelectionRevealAnimated = animated
+    }
+
+    private func cancelSelectionReveal() {
+        pendingSelectionRevealAnimated = nil
+    }
+
+    private func flushPendingSelectionReveal(using proxy: ScrollViewProxy, viewportHeight: CGFloat) {
+        guard let animated = pendingSelectionRevealAnimated else { return }
+        guard scrollSelectionIntoView(using: proxy, viewportHeight: viewportHeight, animated: animated) else { return }
+        pendingSelectionRevealAnimated = nil
+    }
+
     private func installNowLocalKeyMonitor() {
         guard localKeyMonitor == nil else { return }
         let gate = keyboardGate
         let st = store
+        let requestSelectionReveal = { self.requestSelectionReveal(animated: true) }
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let keyCode = event.keyCode
             let commandDown = event.modifierFlags.contains(.command)
@@ -205,7 +361,8 @@ struct NowView: View {
                     keyCode: keyCode,
                     commandDown: commandDown,
                     store: st,
-                    gate: gate
+                    gate: gate,
+                    requestSelectionReveal: requestSelectionReveal
                 )
             }
             return consume ? nil : event
@@ -218,24 +375,45 @@ struct NowView: View {
         }
         localKeyMonitor = nil
     }
+
+    private func installNowLocalScrollMonitor() {
+        guard localScrollMonitor == nil else { return }
+        let st = store
+        localScrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+            MainActor.assumeIsolated {
+                guard st.selectedScreen == .now else { return }
+                cancelSelectionReveal()
+                if case .task = st.selection {
+                    st.select(nil)
+                }
+            }
+            return event
+        }
+    }
+
+    private func removeNowLocalScrollMonitor() {
+        if let monitor = localScrollMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        localScrollMonitor = nil
+    }
 }
 
 // MARK: - Local keys (arrows + return) on main thread
 
 private enum NowLocalKeyRouter {
-    /// `true` if the key event should be consumed (not passed through).
     @MainActor
     static func shouldConsumeKey(
         keyCode: UInt16,
         commandDown: Bool,
         store: TurboTaskStore,
-        gate: NowKeyboardGate
+        gate: NowKeyboardGate,
+        requestSelectionReveal: () -> Void
     ) -> Bool {
         guard store.selectedScreen == .now else { return false }
         guard !gate.taskEditorOpen else { return false }
         guard store.composer == nil else { return false }
 
-        // ⌘T while quick add is open: toggle "schedule for Now" (not the full task composer).
         if gate.quickCreateExpanded, commandDown, keyCode == 17 {
             gate.toggleQuickCreateScheduleForNow?()
             return true
@@ -244,12 +422,13 @@ private enum NowLocalKeyRouter {
         guard !gate.quickCreateExpanded else { return false }
         guard !textInputHasFocus() else { return false }
 
-        // ↑ / ↓ / ← / → — same order as the Now list (scoped tasks).
         switch keyCode {
         case 126, 123:
+            requestSelectionReveal()
             store.moveNowSelection(-1)
             return true
         case 125, 124:
+            requestSelectionReveal()
             store.moveNowSelection(1)
             return true
         case 36:
@@ -308,13 +487,13 @@ private struct NowQuickCreateBar: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             plusButton
 
             if isExpanded {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
-                        TextField("Create task…", text: $title)
+                        TextField("Create task\u{2026}", text: $title)
                             .textFieldStyle(.plain)
                             .font(.body)
                             .focused($isTitleFocused)
@@ -327,7 +506,7 @@ private struct NowQuickCreateBar: View {
                             .controlSize(.small)
                             .font(.caption.weight(.medium))
                             .foregroundStyle(TurboTheme.mutedInk)
-                            .trainingWheelsTooltip("Add to Now when created · ⌘T while this bar is open")
+                            .trainingWheelsTooltip("Add to Now when created \u{00B7} \u{2318}T while this bar is open")
 
                         projectMenu
 
@@ -347,7 +526,7 @@ private struct NowQuickCreateBar: View {
                                 )
                         )
                         .disabled(!canCreate)
-                        .trainingWheelsTooltip("Create task · Return")
+                        .trainingWheelsTooltip("Create task \u{00B7} Return")
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
@@ -373,13 +552,10 @@ private struct NowQuickCreateBar: View {
         .onAppear {
             syncQuickCreateTarget()
         }
-        .onChange(of: store.visibleNowProjects.map(\.project.id)) {
+        .onChange(of: store.jobs.count) {
             syncQuickCreateTarget()
         }
-        .onChange(of: store.projectContexts.map(\.project.id)) {
-            syncQuickCreateTarget()
-        }
-        .onChange(of: store.jobs.map(\.id)) {
+        .onChange(of: store.nowPinnedProjectIDs) {
             syncQuickCreateTarget()
         }
         .onChange(of: isExpanded) {
@@ -399,23 +575,23 @@ private struct NowQuickCreateBar: View {
                 isExpanded.toggle()
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .bold))
+            HStack(spacing: 5) {
+                Image(systemName: isExpanded ? "xmark" : "plus")
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(TurboTheme.mutedInk)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 20, height: 20)
                     .background(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .stroke(TurboTheme.divider, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(TurboTheme.divider.opacity(0.9), lineWidth: 1)
                     )
-                    .rotationEffect(.degrees(isExpanded ? 45 : 0))
-                Text(isExpanded ? "Cancel" : "New task")
-                    .font(.caption.weight(.medium))
+                Text(isExpanded ? "Close" : "Add")
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(TurboTheme.mutedInk)
             }
         }
         .buttonStyle(.plain)
-        .trainingWheelsTooltip(isExpanded ? "Close quick add · ⌘N · ⇧⌘A · Esc" : "Open quick add · ⌘N · ⇧⌘A")
+        .help(isExpanded ? "Close quick add (Esc, \u{2318}N)" : "Quick-add a task (\u{2318}N)")
+        .trainingWheelsTooltip(isExpanded ? "Close quick add \u{00B7} \u{2318}N \u{00B7} \u{21E7}\u{2318}A \u{00B7} Esc" : "Open quick add \u{00B7} \u{2318}N \u{00B7} \u{21E7}\u{2318}A")
     }
 
     private var projectMenu: some View {
@@ -502,7 +678,7 @@ private struct NowQuickCreateBar: View {
     private var targetMenuTint: Color {
         switch target {
         case .inbox:
-            TurboTheme.slate
+            TurboTheme.inboxAccent
         case .jobTask(let jobID):
             store.jobs.first(where: { $0.id == jobID })?.palette.color ?? TurboTheme.slate
         case .project(let jobID, _):
@@ -571,42 +747,21 @@ private struct NowQuickCreateBar: View {
         switch target {
         case .inbox:
             store.addTask(
-                title: trimmed,
-                status: .queued,
-                energy: selectedEnergy,
-                cadence: .oneOff,
-                isScheduledNow: scheduleForNow,
-                repeatEveryMinutes: nil,
-                kpiTarget: nil,
-                kpiUnit: nil,
-                jobID: nil,
-                projectID: nil
+                title: trimmed, status: .queued, energy: selectedEnergy, cadence: .oneOff,
+                isScheduledNow: scheduleForNow, repeatEveryMinutes: nil,
+                kpiTarget: nil, kpiRoundsRemaining: nil, jobID: nil, projectID: nil
             )
         case .jobTask(let jobID):
             store.addTask(
-                title: trimmed,
-                status: .queued,
-                energy: selectedEnergy,
-                cadence: .oneOff,
-                isScheduledNow: scheduleForNow,
-                repeatEveryMinutes: nil,
-                kpiTarget: nil,
-                kpiUnit: nil,
-                jobID: jobID,
-                projectID: nil
+                title: trimmed, status: .queued, energy: selectedEnergy, cadence: .oneOff,
+                isScheduledNow: scheduleForNow, repeatEveryMinutes: nil,
+                kpiTarget: nil, kpiRoundsRemaining: nil, jobID: jobID, projectID: nil
             )
         case .project(let jobID, let projectID):
             store.addTask(
-                title: trimmed,
-                status: .queued,
-                energy: selectedEnergy,
-                cadence: .oneOff,
-                isScheduledNow: scheduleForNow,
-                repeatEveryMinutes: nil,
-                kpiTarget: nil,
-                kpiUnit: nil,
-                jobID: jobID,
-                projectID: projectID
+                title: trimmed, status: .queued, energy: selectedEnergy, cadence: .oneOff,
+                isScheduledNow: scheduleForNow, repeatEveryMinutes: nil,
+                kpiTarget: nil, kpiRoundsRemaining: nil, jobID: jobID, projectID: projectID
             )
         }
 
@@ -623,19 +778,15 @@ private enum NowBoardMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .list:
-            "List"
-        case .tree:
-            "Tree"
+        case .list: "List"
+        case .tree: "Tree"
         }
     }
 
     var symbol: String {
         switch self {
-        case .list:
-            "list.bullet"
-        case .tree:
-            "point.3.filled.connected.trianglepath.dotted"
+        case .list: "list.bullet"
+        case .tree: "point.3.filled.connected.trianglepath.dotted"
         }
     }
 }
@@ -643,77 +794,30 @@ private enum NowBoardMode: String, CaseIterable, Identifiable {
 private struct TodayScopeBar: View {
     @EnvironmentObject private var store: TurboTaskStore
 
-    let weekdayTitle: String
-    let dateTitle: String
     let visibleJobs: [Job]
     let visibleProjects: [ProjectContext]
     let availableJobChoices: [Job]
     let availableProjectChoices: [ProjectContext]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(weekdayTitle)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(TurboTheme.mutedInk)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Today")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(TurboTheme.ink)
-                    Text(dateTitle)
-                        .font(.subheadline)
-                        .foregroundStyle(TurboTheme.mutedInk)
-                    Spacer()
-                }
-            }
-
-            Text("Chips filter the list below. Remove with the X; add again with +. (Tasks remain on Now until you edit them.)")
-                .font(.caption2)
-                .foregroundStyle(TurboTheme.mutedInk)
-                .fixedSize(horizontal: false, vertical: true)
-
+        VStack(alignment: .leading, spacing: 6) {
             ScopeRail(
-                label: "Jobs",
-                addMenuTitle: "Add Job",
-                chips: visibleJobs.map { job in
-                    ScopeChipModel(
-                        id: job.id,
-                        title: job.title,
-                        subtitle: nil,
-                        tint: job.palette.color
-                    )
-                },
-                addChoices: availableJobChoices.map { job in
-                    ScopeMenuChoice(id: job.id, title: job.title, subtitle: "\(job.projects.count) projects", tint: job.palette.color)
-                },
-                onAdd: { id in store.pinNowJob(id) },
-                onRemove: { id in store.removeJobFromNowScope(id) }
+                label: "Jobs", addMenuTitle: "Add Job",
+                chips: visibleJobs.map { ScopeChipModel(id: $0.id, title: $0.title, tint: $0.palette.color) },
+                addChoices: availableJobChoices.map { ScopeMenuChoice(id: $0.id, title: $0.title, subtitle: "\($0.projects.count) projects", tint: $0.palette.color) },
+                onAdd: { store.pinNowJob($0) },
+                onRemove: { store.removeJobFromNowScope($0) }
             )
 
             ScopeRail(
-                label: "Projects",
-                addMenuTitle: "Add Project",
-                chips: visibleProjects.map { context in
-                    ScopeChipModel(
-                        id: context.project.id,
-                        title: context.project.displayTitle,
-                        subtitle: visibleJobs.count > 1 ? context.jobTitle : nil,
-                        tint: context.jobColor
-                    )
-                },
-                addChoices: availableProjectChoices.map { context in
-                    ScopeMenuChoice(
-                        id: context.project.id,
-                        title: context.project.displayTitle,
-                        subtitle: context.jobTitle,
-                        tint: context.jobColor
-                    )
-                },
-                onAdd: { id in store.pinNowProject(id) },
-                onRemove: { id in store.removeProjectFromNowScope(id) }
+                label: "Projects", addMenuTitle: "Add Project",
+                chips: visibleProjects.map { ScopeChipModel(id: $0.project.id, title: $0.project.displayTitle, subtitle: visibleJobs.count > 1 ? $0.jobTitle : nil, tint: $0.jobColor) },
+                addChoices: availableProjectChoices.map { ScopeMenuChoice(id: $0.project.id, title: $0.project.displayTitle, subtitle: $0.jobTitle, tint: $0.jobColor) },
+                onAdd: { store.pinNowProject($0) },
+                onRemove: { store.removeProjectFromNowScope($0) }
             )
         }
-        .padding(.top, 2)
+        .help("Scope filters limit which tasks appear on Now. Remove a chip with \u{00D7}; add with +.")
     }
 }
 
@@ -740,24 +844,22 @@ private struct ScopeRail: View {
     let onRemove: (UUID) -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 8) {
             Text(label)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(TurboTheme.mutedInk)
-                .frame(width: 52, alignment: .leading)
+                .frame(width: 56, alignment: .leading)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     if chips.isEmpty {
-                        Text("None")
+                        Text("\u{2014}")
                             .font(.caption2)
-                            .foregroundStyle(TurboTheme.mutedInk.opacity(0.85))
-                            .padding(.vertical, 4)
+                            .foregroundStyle(TurboTheme.mutedInk.opacity(0.55))
+                            .padding(.vertical, 2)
                     } else {
                         ForEach(chips) { chip in
-                            ScopeChip(chip: chip, onRemove: {
-                                onRemove(chip.id)
-                            })
+                            ScopeChip(chip: chip, onRemove: { onRemove(chip.id) })
                         }
                     }
                 }
@@ -777,9 +879,7 @@ private struct ScopeRail: View {
                                     Text(choice.subtitle)
                                 }
                             } icon: {
-                                Circle()
-                                    .fill(choice.tint)
-                                    .frame(width: 10, height: 10)
+                                Circle().fill(choice.tint).frame(width: 10, height: 10)
                             }
                         }
                     }
@@ -787,12 +887,12 @@ private struct ScopeRail: View {
             }
             label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(TurboTheme.mutedInk)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 20, height: 20)
                     .background(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .stroke(TurboTheme.divider, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(TurboTheme.divider.opacity(0.9), lineWidth: 1)
                     )
             }
             .menuStyle(.borderlessButton)
@@ -808,9 +908,7 @@ private struct ScopeChip: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(chip.tint)
-                .frame(width: 6, height: 6)
+            Circle().fill(chip.tint).frame(width: 6, height: 6)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(chip.title)
@@ -833,14 +931,14 @@ private struct ScopeChip: View {
             .buttonStyle(.plain)
             .trainingWheelsTooltip("Hide from Today scope (add again with +)")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(TurboTheme.cardFill)
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(TurboTheme.cardFill.opacity(0.92))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(TurboTheme.divider, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(TurboTheme.divider.opacity(0.85), lineWidth: 1)
                 )
         )
     }
@@ -848,77 +946,224 @@ private struct ScopeChip: View {
 
 private struct ReturningLaterCard: View {
     private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
     }()
 
     let tasks: [TaskContext]
+    let onEditTask: (TaskContext) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Returning later")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(TurboTheme.mutedInk)
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Later")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(TurboTheme.mutedInk.opacity(0.9))
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     ForEach(tasks) { context in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(context.task.title)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(TurboTheme.ink)
-                                .lineLimit(2)
-                            Text(nextReturnText(for: context.task))
-                                .font(.caption2)
-                                .foregroundStyle(TurboTheme.mutedInk)
-                                .lineLimit(2)
-                        }
-                        .frame(width: 200, alignment: .leading)
-                        .padding(10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(TurboTheme.nestedCardFill)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .stroke(TurboTheme.divider, lineWidth: 1)
-                                )
+                        ReturningLaterTaskChip(
+                            context: context,
+                            returnLine: Self.nextReturnText(for: context.task),
+                            onEditTask: onEditTask
                         )
                     }
                 }
             }
         }
-        .padding(.vertical, 4)
+        .help("Repeatable or KPI tasks waiting for their next cycle. Click to select, double-click to edit, two-finger click for the full menu.")
     }
 
-    private func nextReturnText(for task: Task) -> String {
+    private static func nextReturnText(for task: Task) -> String {
         guard let nextAvailableAt = task.nextAvailableAt else { return "Waiting for the next cycle." }
-        return "Back \(Self.relativeFormatter.localizedString(for: nextAvailableAt, relativeTo: .now))"
+        return "Back \(relativeFormatter.localizedString(for: nextAvailableAt, relativeTo: .now))"
     }
 }
 
-private struct ListBoard: View {
+private struct ReturningLaterTaskChip: View {
     @EnvironmentObject private var store: TurboTaskStore
 
-    let tasks: [TaskContext]
+    let context: TaskContext
+    let returnLine: String
     let onEditTask: (TaskContext) -> Void
 
-    @State private var draggedTaskID: UUID?
-    @State private var dropTargetTaskID: UUID?
-
-    private var openTasks: [TaskContext] {
-        tasks.filter { $0.task.status != .done }
+    private var chipShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
     }
 
-    private var doneTasks: [TaskContext] {
-        tasks.filter { $0.task.status == .done }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(context.task.title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(TurboTheme.ink)
+                .lineLimit(1)
+            Text(returnLine)
+                .font(.caption2)
+                .foregroundStyle(TurboTheme.mutedInk)
+                .lineLimit(1)
+        }
+        .frame(width: 168, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            chipShape
+                .fill(TurboTheme.nestedCardFill.opacity(0.88))
+                .overlay(chipShape.stroke(TurboTheme.divider.opacity(0.75), lineWidth: 1))
+        )
+        .contentShape(chipShape)
+        .onTapGesture(count: 2) { onEditTask(context) }
+        .onTapGesture { store.select(.task(jobID: context.jobID, projectID: context.projectID, taskID: context.task.id)) }
+        .contextMenu {
+            TaskRowContextMenuItems(context: context, onEdit: { onEditTask(context) })
+                .environmentObject(store)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(context.task.title). \(returnLine)")
+        .accessibilityHint("Double-click to edit. Two-finger click or Control-click for pin, archive, delete, and more.")
+    }
+}
+
+private struct NowListSection: Identifiable {
+    let id: String
+    let title: String?
+    let tasks: [TaskContext]
+}
+
+private struct NowListJobGroup: Identifiable {
+    let id: String
+    let title: String
+    let tint: Color
+    let sections: [NowListSection]
+}
+
+private func buildNowListJobGroups(from tasks: [TaskContext], grouping: NowListGroupingMode) -> [NowListJobGroup] {
+    guard grouping != .none else { return [] }
+
+    struct JobBucket {
+        var title: String
+        var tint: Color
+        var tasks: [TaskContext]
+    }
+
+    var orderedJobKeys: [String] = []
+    var jobBuckets: [String: JobBucket] = [:]
+
+    for context in tasks {
+        let jobKey = context.jobID?.uuidString ?? "inbox"
+        if jobBuckets[jobKey] == nil {
+            orderedJobKeys.append(jobKey)
+            let title = context.jobTitle.isEmpty ? "Inbox" : context.jobTitle
+            jobBuckets[jobKey] = JobBucket(title: title, tint: context.jobColor, tasks: [])
+        }
+        jobBuckets[jobKey]?.tasks.append(context)
+    }
+
+    return orderedJobKeys.compactMap { jobKey in
+        guard let bucket = jobBuckets[jobKey] else { return nil }
+        let sections = buildNowListSections(from: bucket.tasks, grouping: grouping)
+        return NowListJobGroup(id: jobKey, title: bucket.title, tint: bucket.tint, sections: sections)
+    }
+}
+
+private func buildNowListSections(from tasks: [TaskContext], grouping: NowListGroupingMode) -> [NowListSection] {
+    guard grouping == .jobsAndProjects else {
+        return [NowListSection(id: "all", title: nil, tasks: tasks)]
+    }
+
+    var orderedSectionKeys: [String] = []
+    var titlesByKey: [String: String?] = [:]
+    var tasksByKey: [String: [TaskContext]] = [:]
+
+    for context in tasks {
+        let key = context.projectID?.uuidString ?? "__job__"
+        if tasksByKey[key] == nil {
+            orderedSectionKeys.append(key)
+            titlesByKey[key] = context.projectTitle.isEmpty ? nil : context.projectTitle
+            tasksByKey[key] = []
+        }
+        tasksByKey[key, default: []].append(context)
+    }
+
+    return orderedSectionKeys.compactMap { key in
+        guard let sectionTasks = tasksByKey[key] else { return nil }
+        return NowListSection(id: key, title: titlesByKey[key] ?? nil, tasks: sectionTasks)
+    }
+}
+
+private struct NowListJobHeader: View {
+    let group: NowListJobGroup
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Capsule()
+                .fill(group.tint.opacity(0.78))
+                .frame(width: 14, height: 3)
+
+            Text(group.title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(TurboTheme.mutedInk.opacity(0.92))
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
+}
+
+private struct NowListProjectHeader: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Rectangle()
+                .fill(TurboTheme.divider.opacity(0.75))
+                .frame(width: 8, height: 1)
+
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(TurboTheme.mutedInk.opacity(0.86))
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 10)
+        .padding(.top, 2)
+        .padding(.bottom, 2)
+    }
+}
+
+// MARK: - List Board (drag-and-drop reorder)
+
+private struct ListBoard: View {
+    @EnvironmentObject private var store: TurboTaskStore
+    @StateObject private var drag = NowDragState()
+
+    let tasks: [TaskContext]
+    let grouping: NowListGroupingMode
+    let onEditTask: (TaskContext) -> Void
+
+    private var openTasks: [TaskContext] { tasks.filter { $0.task.status != .done } }
+    private var doneTasks: [TaskContext] { tasks.filter { $0.task.status == .done } }
+    private var openGroups: [NowListJobGroup] { buildNowListJobGroups(from: openTasks, grouping: grouping) }
+    private var doneGroups: [NowListJobGroup] { buildNowListJobGroups(from: doneTasks, grouping: grouping) }
+
+    private func showDividerBelow(in list: [TaskContext], index: Int) -> Bool {
+        guard index < list.count - 1 else { return false }
+        if drag.draggedID != nil, !drag.hoverIsEnd, drag.hoverTargetID == list[index + 1].id {
+            return false
+        }
+        return true
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             if tasks.isEmpty {
-                listBlockHeader(title: "Tasks", trailing: "0")
-                listOpenCard {
+                sectionHeader(title: "Tasks", trailing: "0")
+                cardWrap(fill: TurboTheme.cardFill, stroke: TurboTheme.cardStroke) {
                     Text("No tasks in this scope.")
                         .font(.subheadline)
                         .foregroundStyle(TurboTheme.mutedInk)
@@ -927,128 +1172,112 @@ private struct ListBoard: View {
                 }
             } else {
                 if !openTasks.isEmpty {
-                    listBlockHeader(title: "Tasks", trailing: "\(openTasks.count) open")
-                    listOpenCard {
-                        ZStack(alignment: .bottom) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(openTasks.enumerated()), id: \.element.id) { index, context in
-                                    nowRow(context, showDividerBelow: index < openTasks.count - 1)
-                                }
-                            }
-                            if doneTasks.isEmpty {
-                                listEndDropOverlay()
-                            }
-                        }
+                    sectionHeader(title: "Tasks", trailing: "\(openTasks.count) open")
+                    cardWrap(fill: TurboTheme.cardFill, stroke: TurboTheme.cardStroke) {
+                        taskColumn(tasks: openTasks, groups: openGroups, isLast: doneTasks.isEmpty)
                     }
                 } else {
-                    listBlockHeader(title: "Tasks", trailing: "No open tasks")
+                    sectionHeader(title: "Tasks", trailing: "No open tasks")
                 }
 
                 if !doneTasks.isEmpty {
-                    listBlockHeader(title: "Done", trailing: "\(doneTasks.count) finished")
-                    listDoneCard {
-                        ZStack(alignment: .bottom) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(doneTasks.enumerated()), id: \.element.id) { index, context in
-                                    nowRow(context, showDividerBelow: index < doneTasks.count - 1)
-                                }
-                            }
-                            listEndDropOverlay()
-                        }
+                    sectionHeader(title: "Done", trailing: "\(doneTasks.count) finished")
+                    cardWrap(fill: TurboTheme.nestedCardFill.opacity(0.88), stroke: TurboTheme.cardStroke.opacity(0.65)) {
+                        taskColumn(tasks: doneTasks, groups: doneGroups, isLast: true)
                     }
                 }
             }
         }
     }
 
-    private func listBlockHeader(title: String, trailing: String) -> some View {
+    @ViewBuilder
+    private func taskColumn(tasks: [TaskContext], groups: [NowListJobGroup], isLast: Bool) -> some View {
+        VStack(spacing: 0) {
+            if grouping == .none {
+                taskRows(tasks)
+            } else {
+                ForEach(Array(groups.enumerated()), id: \.element.id) { groupIndex, group in
+                    if groups.count > 1 || grouping != .none {
+                        NowListJobHeader(group: group)
+                    }
+
+                    let showProjectHeaders = grouping == .jobsAndProjects && group.sections.count > 1
+                    ForEach(group.sections) { section in
+                        if showProjectHeaders, let title = section.title {
+                            NowListProjectHeader(title: title)
+                        }
+                        taskRows(section.tasks)
+                    }
+
+                    if groupIndex < groups.count - 1 {
+                        Color.clear.frame(height: 6)
+                    }
+                }
+            }
+
+            if isLast {
+                Color.clear
+                    .frame(maxWidth: .infinity).frame(height: 18)
+                    .contentShape(Rectangle())
+                    .overlay(alignment: .top) {
+                        if drag.draggedID != nil, drag.hoverIsEnd { NowDropLine() }
+                    }
+                    .onDrop(of: [.text], delegate: NowEndDropDelegate(drag: drag) { movingID in
+                        store.reorderNowTaskToEnd(movingID)
+                    })
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func taskRows(_ list: [TaskContext]) -> some View {
+        ForEach(Array(list.enumerated()), id: \.element.id) { index, context in
+            NowTaskBlock(context: context, drag: drag, onEditTask: onEditTask)
+                .environmentObject(store)
+                .overlay(alignment: .top) {
+                    if drag.draggedID != nil, !drag.hoverIsEnd, drag.hoverTargetID == context.task.id {
+                        NowDropLine()
+                    }
+                }
+                .onDrop(of: [.text], delegate: NowRowDropDelegate(rowID: context.task.id, drag: drag) { movingID in
+                    store.reorderNowTask(movingID, before: context.task.id)
+                })
+
+            if showDividerBelow(in: list, index: index) {
+                Rectangle().fill(TurboTheme.divider).frame(height: 1)
+            }
+        }
+    }
+
+    private func sectionHeader(title: String, trailing: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(TurboTheme.ink)
+            Text(title).font(.headline.weight(.semibold)).foregroundStyle(TurboTheme.ink)
             Spacer()
-            Text(trailing)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(TurboTheme.mutedInk)
-                .multilineTextAlignment(.trailing)
-                .monospacedDigit()
+            Text(trailing).font(.caption.weight(.medium)).foregroundStyle(TurboTheme.mutedInk).multilineTextAlignment(.trailing).monospacedDigit()
         }
         .padding(.bottom, 2)
     }
 
-    private func listOpenCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    private func cardWrap<Content: View>(fill: Color, stroke: Color, @ViewBuilder content: () -> Content) -> some View {
         content()
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(TurboTheme.cardFill)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(TurboTheme.cardStroke, lineWidth: 1)
-                    )
+                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(fill)
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(stroke, lineWidth: 1))
             )
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private func listDoneCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(TurboTheme.nestedCardFill.opacity(0.88))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(TurboTheme.cardStroke.opacity(0.65), lineWidth: 1)
-                    )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    /// Sits over the bottom of the list (no extra blank space below the last row).
-    private func listEndDropOverlay() -> some View {
-        Color.clear
-            .frame(maxWidth: .infinity)
-            .frame(height: 14)
-            .contentShape(Rectangle())
-            .onDrop(
-                of: nowDragUTTypes,
-                delegate: NowTaskEndDropDelegate(draggedTaskID: $draggedTaskID) { id in
-                    store.reorderNowTaskToEnd(id)
-                }
-            )
-    }
-
-    @ViewBuilder
-    private func nowRow(_ context: TaskContext, showDividerBelow: Bool) -> some View {
-        Group {
-            NowTaskBlock(
-                context: context,
-                draggedTaskID: $draggedTaskID,
-                dropTargetTaskID: $dropTargetTaskID,
-                onEditTask: onEditTask,
-                onMoveBefore: { movingTaskID in
-                    store.reorderNowTask(movingTaskID, before: context.task.id)
-                }
-            )
-            .environmentObject(store)
-
-            if showDividerBelow {
-                Rectangle()
-                    .fill(TurboTheme.divider)
-                    .frame(height: 1)
-            }
-        }
     }
 }
 
+// MARK: - Tree view
+
 private struct NowTreeWithDoneSection: View {
     @EnvironmentObject private var store: TurboTaskStore
+    @StateObject private var drag = NowDragState()
 
     let openTasks: [TaskContext]
     let doneTasks: [TaskContext]
     let treeGroups: [[TaskContext]]
     let onEditTask: (TaskContext) -> Void
-
-    @State private var draggedTaskID: UUID?
-    @State private var dropTargetTaskID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -1060,98 +1289,67 @@ private struct NowTreeWithDoneSection: View {
             } else {
                 if !openTasks.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("Tasks")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(TurboTheme.ink)
+                        Text("Tasks").font(.headline.weight(.semibold)).foregroundStyle(TurboTheme.ink)
                         Spacer()
-                        Text("\(openTasks.count) open")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(TurboTheme.mutedInk)
-                            .monospacedDigit()
+                        Text("\(openTasks.count) open").font(.caption.weight(.medium)).foregroundStyle(TurboTheme.mutedInk).monospacedDigit()
                     }
                     .padding(.bottom, 2)
 
-                    TreeBoard(groups: treeGroups, onEditTask: onEditTask)
+                    TreeBoard(groups: treeGroups, drag: drag, onEditTask: onEditTask)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 14)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(TurboTheme.cardFill)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .stroke(TurboTheme.cardStroke, lineWidth: 1)
-                                )
+                            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(TurboTheme.cardFill)
+                                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(TurboTheme.cardStroke, lineWidth: 1))
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 } else if !doneTasks.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("Tasks")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(TurboTheme.ink)
+                        Text("Tasks").font(.headline.weight(.semibold)).foregroundStyle(TurboTheme.ink)
                         Spacer()
-                        Text("No open tasks")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(TurboTheme.mutedInk)
+                        Text("No open tasks").font(.caption.weight(.medium)).foregroundStyle(TurboTheme.mutedInk)
                     }
                     .padding(.bottom, 2)
                 }
 
                 if !doneTasks.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
-                        Text("Done")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(TurboTheme.ink)
+                        Text("Done").font(.headline.weight(.semibold)).foregroundStyle(TurboTheme.ink)
                         Spacer()
-                        Text("\(doneTasks.count) finished")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(TurboTheme.mutedInk)
-                            .monospacedDigit()
+                        Text("\(doneTasks.count) finished").font(.caption.weight(.medium)).foregroundStyle(TurboTheme.mutedInk).monospacedDigit()
                     }
                     .padding(.bottom, 2)
 
-                    ZStack(alignment: .bottom) {
-                        VStack(spacing: 0) {
-                            ForEach(Array(doneTasks.enumerated()), id: \.element.id) { index, context in
-                                Group {
-                                    NowTaskBlock(
-                                        context: context,
-                                        draggedTaskID: $draggedTaskID,
-                                        dropTargetTaskID: $dropTargetTaskID,
-                                        onEditTask: onEditTask,
-                                        onMoveBefore: { movingTaskID in
-                                            store.reorderNowTask(movingTaskID, before: context.task.id)
-                                        }
-                                    )
-                                    .environmentObject(store)
-
-                                    if index < doneTasks.count - 1 {
-                                        Rectangle()
-                                            .fill(TurboTheme.divider)
-                                            .frame(height: 1)
+                    VStack(spacing: 0) {
+                        ForEach(Array(doneTasks.enumerated()), id: \.element.id) { index, context in
+                            NowTaskBlock(context: context, drag: drag, onEditTask: onEditTask)
+                                .environmentObject(store)
+                                .overlay(alignment: .top) {
+                                    if drag.draggedID != nil, !drag.hoverIsEnd, drag.hoverTargetID == context.task.id {
+                                        NowDropLine()
                                     }
                                 }
+                                .onDrop(of: [.text], delegate: NowRowDropDelegate(rowID: context.task.id, drag: drag) { movingID in
+                                    store.reorderNowTask(movingID, before: context.task.id)
+                                })
+
+                            if index < doneTasks.count - 1 {
+                                Rectangle().fill(TurboTheme.divider).frame(height: 1)
                             }
                         }
 
-                        Color.clear
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 14)
-                            .contentShape(Rectangle())
-                            .onDrop(
-                                of: nowDragUTTypes,
-                                delegate: NowTaskEndDropDelegate(draggedTaskID: $draggedTaskID) { id in
-                                    store.reorderNowTaskToEnd(id)
-                                }
-                            )
+                        Color.clear.frame(maxWidth: .infinity).frame(height: 18).contentShape(Rectangle())
+                            .overlay(alignment: .top) {
+                                if drag.draggedID != nil, drag.hoverIsEnd { NowDropLine() }
+                            }
+                            .onDrop(of: [.text], delegate: NowEndDropDelegate(drag: drag) { movingID in
+                                store.reorderNowTaskToEnd(movingID)
+                            })
                     }
                     .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(TurboTheme.nestedCardFill.opacity(0.88))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(TurboTheme.cardStroke.opacity(0.65), lineWidth: 1)
-                            )
+                        RoundedRectangle(cornerRadius: 10, style: .continuous).fill(TurboTheme.nestedCardFill.opacity(0.88))
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(TurboTheme.cardStroke.opacity(0.65), lineWidth: 1))
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
@@ -1162,20 +1360,13 @@ private struct NowTreeWithDoneSection: View {
 
 private struct TreeBoard: View {
     let groups: [[TaskContext]]
+    @ObservedObject var drag: NowDragState
     let onEditTask: (TaskContext) -> Void
-
-    @State private var draggedTaskID: UUID?
-    @State private var dropTargetTaskID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                TreeBundleRow(
-                    group: group,
-                    draggedTaskID: $draggedTaskID,
-                    dropTargetTaskID: $dropTargetTaskID,
-                    onEditTask: onEditTask
-                )
+                TreeBundleRow(group: group, drag: drag, onEditTask: onEditTask)
             }
         }
         .frame(maxWidth: .infinity)
@@ -1184,34 +1375,21 @@ private struct TreeBoard: View {
 
 private struct TreeBundleRow: View {
     let group: [TaskContext]
-    @Binding var draggedTaskID: UUID?
-    @Binding var dropTargetTaskID: UUID?
+    @ObservedObject var drag: NowDragState
     let onEditTask: (TaskContext) -> Void
 
     var body: some View {
         Group {
             if group.count == 1, let context = group.first {
-                TreeMiniTaskNode(
-                    context: context,
-                    layout: .single,
-                    draggedTaskID: $draggedTaskID,
-                    dropTargetTaskID: $dropTargetTaskID,
-                    onEditTask: onEditTask
-                )
-                .frame(maxWidth: 520)
-                .frame(maxWidth: .infinity)
+                TreeMiniTaskNode(context: context, layout: .single, drag: drag, onEditTask: onEditTask)
+                    .frame(maxWidth: 520)
+                    .frame(maxWidth: .infinity)
             } else if !group.isEmpty {
                 HStack(alignment: .top, spacing: 12) {
                     Spacer(minLength: 0)
                     ForEach(group) { context in
-                        TreeMiniTaskNode(
-                            context: context,
-                            layout: .bundleColumn,
-                            draggedTaskID: $draggedTaskID,
-                            dropTargetTaskID: $dropTargetTaskID,
-                            onEditTask: onEditTask
-                        )
-                        .frame(minWidth: 200, maxWidth: 272)
+                        TreeMiniTaskNode(context: context, layout: .bundleColumn, drag: drag, onEditTask: onEditTask)
+                            .frame(minWidth: 200, maxWidth: 272)
                     }
                     Spacer(minLength: 0)
                 }
@@ -1224,37 +1402,35 @@ private struct TreeBundleRow: View {
 private struct TreeMiniTaskNode: View {
     @EnvironmentObject private var store: TurboTaskStore
 
-    enum Layout {
-        case single
-        case bundleColumn
-    }
+    enum Layout { case single, bundleColumn }
 
     let context: TaskContext
     let layout: Layout
-    @Binding var draggedTaskID: UUID?
-    @Binding var dropTargetTaskID: UUID?
+    @ObservedObject var drag: NowDragState
     let onEditTask: (TaskContext) -> Void
 
-    private var isSelected: Bool {
-        store.selection == .task(jobID: context.jobID, projectID: context.projectID, taskID: context.task.id)
-    }
-
-    private var rowFlashActive: Bool {
-        store.nowRowFlashTaskID == context.task.id
-    }
+    private var rowFlashActive: Bool { store.nowRowFlashTaskID == context.task.id }
 
     private var metaLine: String {
         var parts: [String] = [context.task.energy.shortTitle]
-        if !context.projectTitle.isEmpty {
-            parts.append(context.projectTitle)
-        }
-        if let badge = context.task.cadenceBadge {
-            parts.append(badge)
-        }
-        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+        if !context.projectTitle.isEmpty { parts.append(context.projectTitle) }
+        if let badge = context.task.cadenceBadge { parts.append(badge) }
+        return parts.filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
     }
 
     var body: some View {
+        rowContent
+            .overlay(alignment: .top) {
+                if drag.draggedID != nil, !drag.hoverIsEnd, drag.hoverTargetID == context.task.id {
+                    NowDropLine()
+                }
+            }
+            .onDrop(of: [.text], delegate: NowRowDropDelegate(rowID: context.task.id, drag: drag) { movingID in
+                store.reorderNowTask(movingID, before: context.task.id)
+            })
+    }
+
+    private var rowContent: some View {
         HStack(alignment: .center, spacing: 8) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 11, weight: .medium))
@@ -1262,7 +1438,7 @@ private struct TreeMiniTaskNode: View {
                 .frame(width: 16, height: 28)
                 .contentShape(Rectangle())
                 .onDrag {
-                    draggedTaskID = context.task.id
+                    drag.draggedID = context.task.id
                     return NSItemProvider(object: context.task.id.uuidString as NSString)
                 } preview: {
                     Text(context.task.title)
@@ -1324,51 +1500,33 @@ private struct TreeMiniTaskNode: View {
                 .fill(rowFlashActive ? TurboTheme.rowSelected : TurboTheme.nestedCardFill.opacity(0.72))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(
-                            dropTargetTaskID == context.task.id
-                                ? TurboTheme.ink.opacity(0.4)
-                                : (rowFlashActive ? context.jobColor.opacity(0.35) : TurboTheme.cardStroke.opacity(0.55)),
-                            lineWidth: dropTargetTaskID == context.task.id ? 2 : 1
-                        )
+                        .stroke(rowFlashActive ? context.jobColor.opacity(0.35) : TurboTheme.cardStroke.opacity(0.55), lineWidth: 1)
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .id(context.task.id)
+        .nowTaskFrameReporter(taskID: context.task.id)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(context.task.title). \(context.jobTitle). \(context.task.status.title). \(metaLine)")
-        .onDrop(
-            of: nowDragUTTypes,
-            delegate: NowTaskDropDelegate(
-                targetTaskID: context.task.id,
-                draggedTaskID: $draggedTaskID,
-                dropTargetTaskID: $dropTargetTaskID,
-                onMoveBefore: { movingTaskID in
-                    store.reorderNowTask(movingTaskID, before: context.task.id)
-                }
-            )
-        )
-        .onTapGesture {
-            store.select(.task(jobID: context.jobID, projectID: context.projectID, taskID: context.task.id))
-        }
-        .onTapGesture(count: 2) {
-            onEditTask(context)
-        }
+        .onTapGesture(count: 2) { onEditTask(context) }
+        .onTapGesture { store.select(.task(jobID: context.jobID, projectID: context.projectID, taskID: context.task.id)) }
         .contextMenu {
             TaskRowContextMenuItems(context: context, onEdit: { onEditTask(context) })
                 .environmentObject(store)
         }
-        .trainingWheelsTooltip("↑↓←→ change selection · Return starts · ⌘↩ start · ⌘P pause · ⌘D done · Right-click for more")
+        .trainingWheelsTooltip("\u{2191}\u{2193} change selection \u{00B7} \u{21A9} starts \u{00B7} \u{2318}\u{21A9} start \u{00B7} \u{2318}P pause \u{00B7} \u{2318}D done \u{00B7} Right-click for more")
     }
 }
+
+// MARK: - Task Row (list mode)
 
 private struct NowTaskBlock: View {
     @EnvironmentObject private var store: TurboTaskStore
 
     let context: TaskContext
     var compact = false
-    @Binding var draggedTaskID: UUID?
-    @Binding var dropTargetTaskID: UUID?
+    @ObservedObject var drag: NowDragState
     let onEditTask: (TaskContext) -> Void
-    let onMoveBefore: (UUID) -> Void
 
     @State private var isHovering = false
 
@@ -1376,25 +1534,22 @@ private struct NowTaskBlock: View {
         store.selection == .task(jobID: context.jobID, projectID: context.projectID, taskID: context.task.id)
     }
 
-    private var rowFlashActive: Bool {
-        store.nowRowFlashTaskID == context.task.id
+    private var rowFlashActive: Bool { store.nowRowFlashTaskID == context.task.id }
+
+    private var showsKpiCounter: Bool {
+        context.task.cadence == .kpi && context.task.kpiTarget != nil
     }
 
     private var metaLine: String {
         var parts: [String] = []
-        if !context.projectTitle.isEmpty {
-            parts.append(context.projectTitle)
-        }
-        if let badge = context.task.cadenceBadge {
-            parts.append(badge)
-        }
-        return parts.joined(separator: " · ")
+        if !context.projectTitle.isEmpty { parts.append(context.projectTitle) }
+        if let badge = context.task.cadenceBadge { parts.append(badge) }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            dragHandle
-                .opacity(isHovering || rowFlashActive ? 0.5 : 0.2)
+            dragHandle.opacity(isHovering || rowFlashActive ? 0.5 : 0.2)
 
             RoundedRectangle(cornerRadius: 2, style: .continuous)
                 .fill(context.jobColor)
@@ -1431,6 +1586,37 @@ private struct NowTaskBlock: View {
 
                     Spacer(minLength: 4)
 
+                    if showsKpiCounter {
+                        Button {
+                            store.adjustKpiCount(context, delta: 1)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(context.task.kpiCounterLabel ?? "\(context.task.kpiCount)")
+                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundStyle(TurboTheme.ink)
+                                    .lineLimit(1)
+
+                                Image(systemName: "plus")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundStyle(context.jobColor.opacity(0.95))
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(context.jobColor.opacity(0.12))
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(context.jobColor.opacity(0.24), lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Add one to this KPI counter")
+                        .accessibilityLabel("Count KPI")
+                    }
+
                     Text(context.task.energy.shortTitle)
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(context.task.energy.accent)
@@ -1451,39 +1637,20 @@ private struct NowTaskBlock: View {
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(rowFill)
-        .overlay {
-            if dropTargetTaskID == context.task.id {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .stroke(TurboTheme.ink.opacity(0.35), lineWidth: 2)
-                    .padding(2)
-                    .allowsHitTesting(false)
-            }
-        }
         .contentShape(Rectangle())
+        .id(context.task.id)
+        .nowTaskFrameReporter(taskID: context.task.id)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary)
         .accessibilityHint("Arrow keys change selection. Return starts the task. Command shortcuts: Return start, P pause, D done. Right-click for more.")
-        .onDrop(
-            of: nowDragUTTypes,
-            delegate: NowTaskDropDelegate(
-                targetTaskID: context.task.id,
-                draggedTaskID: $draggedTaskID,
-                dropTargetTaskID: $dropTargetTaskID,
-                onMoveBefore: onMoveBefore
-            )
-        )
         .onHover { isHovering = $0 }
-        .onTapGesture {
-            store.select(.task(jobID: context.jobID, projectID: context.projectID, taskID: context.task.id))
-        }
-        .onTapGesture(count: 2) {
-            onEditTask(context)
-        }
+        .onTapGesture(count: 2) { onEditTask(context) }
+        .onTapGesture { store.select(.task(jobID: context.jobID, projectID: context.projectID, taskID: context.task.id)) }
         .contextMenu {
             TaskRowContextMenuItems(context: context, onEdit: { onEditTask(context) })
                 .environmentObject(store)
         }
-        .trainingWheelsTooltip("↑↓←→ selection · Return start · ⌘↩ start · ⌘P pause · ⌘D done · Right-click for more")
+        .trainingWheelsTooltip("\u{2191}\u{2193} selection \u{00B7} \u{21A9} start \u{00B7} \u{2318}\u{21A9} start \u{00B7} \u{2318}P pause \u{00B7} \u{2318}D done \u{00B7} Right-click for more")
     }
 
     private var accessibilitySummary: String {
@@ -1492,19 +1659,15 @@ private struct NowTaskBlock: View {
     }
 
     private var rowFill: Color {
-        if rowFlashActive {
-            return TurboTheme.rowSelected
-        }
-        if isHovering {
-            return TurboTheme.rowHover
-        }
+        if rowFlashActive { return TurboTheme.rowSelected }
+        if isHovering { return TurboTheme.rowHover }
         return Color.clear
     }
 
     private var dragHandle: some View {
         TaskReorderHandle()
             .onDrag {
-                draggedTaskID = context.task.id
+                drag.draggedID = context.task.id
                 return NSItemProvider(object: context.task.id.uuidString as NSString)
             } preview: {
                 Text(context.task.title)
@@ -1558,14 +1721,8 @@ private struct NowTaskBlock: View {
             .foregroundStyle(statusPillForeground)
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(statusPillFill)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(statusPillStroke, lineWidth: 0.5)
-            )
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(statusPillFill))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(statusPillStroke, lineWidth: 0.5))
         }
         .menuStyle(.borderlessButton)
         .buttonStyle(.plain)
@@ -1576,99 +1733,74 @@ private struct NowTaskBlock: View {
 
     private var statusPillForeground: Color {
         switch context.task.status {
-        case .done:
-            TurboTheme.mutedInk
-        case .active:
-            context.jobColor
-        default:
-            context.task.status.accent
+        case .done: TurboTheme.mutedInk
+        case .active: context.jobColor
+        default: context.task.status.accent
         }
     }
 
     private var statusPillFill: Color {
         switch context.task.status {
-        case .done:
-            TurboTheme.nestedCardFill.opacity(0.9)
-        case .queued:
-            TurboTheme.mutedInk.opacity(0.06)
-        case .active:
-            context.jobColor.opacity(0.12)
-        default:
-            context.task.status.accent.opacity(0.12)
+        case .done: TurboTheme.nestedCardFill.opacity(0.9)
+        case .queued: TurboTheme.mutedInk.opacity(0.06)
+        case .active: context.jobColor.opacity(0.12)
+        default: context.task.status.accent.opacity(0.12)
         }
     }
 
     private var statusPillStroke: Color {
         switch context.task.status {
-        case .done:
-            TurboTheme.divider
-        case .queued:
-            TurboTheme.divider
-        case .active:
-            context.jobColor.opacity(0.32)
-        default:
-            context.task.status.accent.opacity(0.28)
+        case .done: TurboTheme.divider
+        case .queued: TurboTheme.divider
+        case .active: context.jobColor.opacity(0.32)
+        default: context.task.status.accent.opacity(0.28)
         }
     }
 
     private func statusMenuIconTint(_ status: TaskStatus) -> Color {
-        if status == .active {
-            return context.jobColor
-        }
-        return status.accent
+        status == .active ? context.jobColor : status.accent
     }
 
     private func statusShortLabel(_ status: TaskStatus) -> String {
         switch status {
-        case .queued:
-            "Open"
-        case .active:
-            "Active"
-        case .waiting:
-            "Waiting"
-        case .paused:
-            "Paused"
-        case .done:
-            "Done"
+        case .queued: "Open"
+        case .active: "Active"
+        case .waiting: "Waiting"
+        case .paused: "Paused"
+        case .done: "Done"
         }
     }
 
     private func statusMenuSymbol(_ status: TaskStatus) -> String {
         switch status {
-        case .queued:
-            "circle"
-        case .active:
-            "play.fill"
-        case .waiting:
-            "hourglass"
-        case .paused:
-            "pause.fill"
-        case .done:
-            "checkmark.circle.fill"
+        case .queued: "circle"
+        case .active: "play.fill"
+        case .waiting: "hourglass"
+        case .paused: "pause.fill"
+        case .done: "checkmark.circle.fill"
         }
     }
-
 }
 
-private struct NowTaskDropDelegate: DropDelegate {
-    let targetTaskID: UUID
-    @Binding var draggedTaskID: UUID?
-    @Binding var dropTargetTaskID: UUID?
+// MARK: - Drop Delegates (reference-type drag state for reliability)
+
+private struct NowRowDropDelegate: DropDelegate {
+    let rowID: UUID
+    let drag: NowDragState
     let onMoveBefore: (UUID) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: nowDragUTTypes)
+        drag.draggedID != nil && drag.draggedID != rowID
     }
 
     func dropEntered(info: DropInfo) {
-        guard let draggedTaskID, draggedTaskID != targetTaskID else { return }
-        dropTargetTaskID = targetTaskID
+        guard let id = drag.draggedID, id != rowID else { return }
+        drag.hoverIsEnd = false
+        drag.hoverTargetID = rowID
     }
 
     func dropExited(info: DropInfo) {
-        if dropTargetTaskID == targetTaskID {
-            dropTargetTaskID = nil
-        }
+        if drag.hoverTargetID == rowID { drag.hoverTargetID = nil }
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -1676,54 +1808,39 @@ private struct NowTaskDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        dropTargetTaskID = nil
-        let providers = info.itemProviders(for: nowDragUTTypes)
-        guard let provider = providers.first else {
-            draggedTaskID = nil
+        guard let movingID = drag.draggedID, movingID != rowID else {
+            drag.reset()
             return false
         }
-        let target = targetTaskID
-        let move = onMoveBefore
-        _ = provider.loadObject(ofClass: NSString.self, completionHandler: { reading, _ in
-            DispatchQueue.main.async {
-                defer { draggedTaskID = nil }
-                let str = (reading as? NSString) as String?
-                guard let str, let id = UUID(uuidString: str.trimmingCharacters(in: .whitespacesAndNewlines)),
-                      id != target else { return }
-                move(id)
-            }
-        })
+        drag.reset()
+        onMoveBefore(movingID)
         return true
     }
 }
 
-private struct NowTaskEndDropDelegate: DropDelegate {
-    @Binding var draggedTaskID: UUID?
+private struct NowEndDropDelegate: DropDelegate {
+    let drag: NowDragState
     let onMoveToEnd: (UUID) -> Void
 
-    func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: nowDragUTTypes) && draggedTaskID != nil
+    func validateDrop(info: DropInfo) -> Bool { drag.draggedID != nil }
+
+    func dropEntered(info: DropInfo) {
+        guard drag.draggedID != nil else { return }
+        drag.hoverTargetID = nil
+        drag.hoverIsEnd = true
     }
 
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
+    func dropExited(info: DropInfo) { drag.hoverIsEnd = false }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
 
     func performDrop(info: DropInfo) -> Bool {
-        let providers = info.itemProviders(for: nowDragUTTypes)
-        guard let provider = providers.first else {
-            draggedTaskID = nil
+        guard let movingID = drag.draggedID else {
+            drag.reset()
             return false
         }
-        let end = onMoveToEnd
-        _ = provider.loadObject(ofClass: NSString.self, completionHandler: { reading, _ in
-            DispatchQueue.main.async {
-                defer { draggedTaskID = nil }
-                let str = (reading as? NSString) as String?
-                guard let str, let id = UUID(uuidString: str.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
-                end(id)
-            }
-        })
+        drag.reset()
+        onMoveToEnd(movingID)
         return true
     }
 }

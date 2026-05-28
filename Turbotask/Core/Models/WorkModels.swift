@@ -8,6 +8,41 @@
 import Foundation
 import SwiftUI
 
+enum NowListGroupingMode: String, CaseIterable, Identifiable {
+    case none
+    case jobs
+    case jobsAndProjects
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .none:
+            "Off"
+        case .jobs:
+            "Jobs"
+        case .jobsAndProjects:
+            "Jobs + Projects"
+        }
+    }
+}
+
+enum NewNowTaskPlacement: String, CaseIterable, Identifiable, Codable {
+    case top
+    case bottom
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .top:
+            "Top"
+        case .bottom:
+            "Bottom"
+        }
+    }
+}
+
 enum AppThemeMode: String, CaseIterable, Identifiable, Codable {
     case system
     case light
@@ -44,6 +79,18 @@ enum JobPalette: String, CaseIterable, Identifiable, Hashable, Codable {
     case amber
     case rose
     case slate
+    case violet
+    case magenta
+    case mint
+    case teal
+    case sky
+    case indigo
+    case lime
+    case coral
+    case plum
+    case copper
+    case cyan
+    case iris
 
     var id: String { rawValue }
 
@@ -58,7 +105,31 @@ enum JobPalette: String, CaseIterable, Identifiable, Hashable, Codable {
         case .rose:
             "Red"
         case .slate:
-            "Yellow"
+            "Gold"
+        case .violet:
+            "Violet"
+        case .magenta:
+            "Magenta"
+        case .mint:
+            "Mint"
+        case .teal:
+            "Teal"
+        case .sky:
+            "Sky"
+        case .indigo:
+            "Indigo"
+        case .lime:
+            "Lime"
+        case .coral:
+            "Coral"
+        case .plum:
+            "Plum"
+        case .copper:
+            "Copper"
+        case .cyan:
+            "Cyan"
+        case .iris:
+            "Iris"
         }
     }
 
@@ -74,6 +145,30 @@ enum JobPalette: String, CaseIterable, Identifiable, Hashable, Codable {
             Color(red: 0.96, green: 0.18, blue: 0.28)
         case .slate:
             Color(red: 0.98, green: 0.82, blue: 0.06)
+        case .violet:
+            Color(red: 0.55, green: 0.28, blue: 0.98)
+        case .magenta:
+            Color(red: 0.92, green: 0.20, blue: 0.72)
+        case .mint:
+            Color(red: 0.10, green: 0.82, blue: 0.62)
+        case .teal:
+            Color(red: 0.0, green: 0.62, blue: 0.58)
+        case .sky:
+            Color(red: 0.22, green: 0.72, blue: 0.98)
+        case .indigo:
+            Color(red: 0.29, green: 0.28, blue: 0.92)
+        case .lime:
+            Color(red: 0.58, green: 0.86, blue: 0.12)
+        case .coral:
+            Color(red: 1.0, green: 0.42, blue: 0.38)
+        case .plum:
+            Color(red: 0.60, green: 0.22, blue: 0.62)
+        case .copper:
+            Color(red: 0.78, green: 0.42, blue: 0.22)
+        case .cyan:
+            Color(red: 0.0, green: 0.76, blue: 0.92)
+        case .iris:
+            Color(red: 0.40, green: 0.50, blue: 1.0)
         }
     }
 }
@@ -213,12 +308,18 @@ struct Task: Identifiable, Hashable, Codable {
     var repeatEveryMinutes: Int?
     var kpiTarget: Int?
     var kpiUnit: String?
+    var kpiRoundsRemaining: Int?
+    var kpiCount: Int
     var nextAvailableAt: Date?
     /// macOS app bundle IDs for tools needed (icons only; no app control).
     var toolBundleIDs: [String]
     /// Optional plan dates (informational only; not used for scheduling).
     var startDate: Date?
     var endDate: Date?
+    /// Hidden from Now, registry, and job/project lists until restored (e.g. auto-archived when idle).
+    var isArchived: Bool
+    /// When the task was archived; used for retention purge. Nil for legacy data until migration fills it.
+    var archivedAt: Date?
 
     init(
         id: UUID = UUID(),
@@ -238,10 +339,14 @@ struct Task: Identifiable, Hashable, Codable {
         repeatEveryMinutes: Int? = nil,
         kpiTarget: Int? = nil,
         kpiUnit: String? = nil,
+        kpiRoundsRemaining: Int? = nil,
+        kpiCount: Int = 0,
         nextAvailableAt: Date? = nil,
         toolBundleIDs: [String] = [],
         startDate: Date? = nil,
-        endDate: Date? = nil
+        endDate: Date? = nil,
+        isArchived: Bool = false,
+        archivedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -260,10 +365,14 @@ struct Task: Identifiable, Hashable, Codable {
         self.repeatEveryMinutes = repeatEveryMinutes
         self.kpiTarget = kpiTarget
         self.kpiUnit = kpiUnit
+        self.kpiRoundsRemaining = kpiRoundsRemaining
+        self.kpiCount = kpiCount
         self.nextAvailableAt = nextAvailableAt
         self.toolBundleIDs = Task.normalizedToolBundleIDs(toolBundleIDs)
         self.startDate = startDate
         self.endDate = endDate
+        self.isArchived = isArchived
+        self.archivedAt = archivedAt
     }
 
     enum CodingKeys: String, CodingKey {
@@ -285,10 +394,14 @@ struct Task: Identifiable, Hashable, Codable {
         case repeatEveryMinutes
         case kpiTarget
         case kpiUnit
+        case kpiRoundsRemaining
+        case kpiCount
         case nextAvailableAt
         case toolBundleIDs
         case startDate
         case endDate
+        case isArchived
+        case archivedAt
     }
 
     static func normalizedToolBundleIDs(_ raw: [String]) -> [String] {
@@ -326,10 +439,14 @@ struct Task: Identifiable, Hashable, Codable {
         repeatEveryMinutes = try container.decodeIfPresent(Int.self, forKey: .repeatEveryMinutes)
         kpiTarget = try container.decodeIfPresent(Int.self, forKey: .kpiTarget)
         kpiUnit = try container.decodeIfPresent(String.self, forKey: .kpiUnit)
+        kpiRoundsRemaining = try container.decodeIfPresent(Int.self, forKey: .kpiRoundsRemaining)
+        kpiCount = try container.decodeIfPresent(Int.self, forKey: .kpiCount) ?? 0
         nextAvailableAt = try container.decodeIfPresent(Date.self, forKey: .nextAvailableAt)
         toolBundleIDs = Task.normalizedToolBundleIDs(try container.decodeIfPresent([String].self, forKey: .toolBundleIDs) ?? [])
         startDate = try container.decodeIfPresent(Date.self, forKey: .startDate)
         endDate = try container.decodeIfPresent(Date.self, forKey: .endDate)
+        isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+        archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -351,10 +468,43 @@ struct Task: Identifiable, Hashable, Codable {
         try container.encodeIfPresent(repeatEveryMinutes, forKey: .repeatEveryMinutes)
         try container.encodeIfPresent(kpiTarget, forKey: .kpiTarget)
         try container.encodeIfPresent(kpiUnit, forKey: .kpiUnit)
+        try container.encodeIfPresent(kpiRoundsRemaining, forKey: .kpiRoundsRemaining)
+        try container.encode(kpiCount, forKey: .kpiCount)
         try container.encodeIfPresent(nextAvailableAt, forKey: .nextAvailableAt)
         try container.encode(toolBundleIDs, forKey: .toolBundleIDs)
         try container.encodeIfPresent(startDate, forKey: .startDate)
         try container.encodeIfPresent(endDate, forKey: .endDate)
+        try container.encode(isArchived, forKey: .isArchived)
+        try container.encodeIfPresent(archivedAt, forKey: .archivedAt)
+    }
+
+    /// Copies every mutable field from `other` onto `self` (same `id` required). Used for ⌘Z undo.
+    mutating func applyFullState(from other: Task) {
+        guard id == other.id else { return }
+        title = other.title
+        summary = other.summary
+        why = other.why
+        energy = other.energy
+        cadence = other.cadence
+        status = other.status
+        progress = other.progress
+        estimatedMinutes = other.estimatedMinutes
+        isScheduledNow = other.isScheduledNow
+        nowOrder = other.nowOrder
+        priority = other.priority
+        waitingOn = other.waitingOn
+        nextStep = other.nextStep
+        repeatEveryMinutes = other.repeatEveryMinutes
+        kpiTarget = other.kpiTarget
+        kpiUnit = other.kpiUnit
+        kpiRoundsRemaining = other.kpiRoundsRemaining
+        kpiCount = other.kpiCount
+        nextAvailableAt = other.nextAvailableAt
+        toolBundleIDs = other.toolBundleIDs
+        startDate = other.startDate
+        endDate = other.endDate
+        isArchived = other.isArchived
+        archivedAt = other.archivedAt
     }
 
     /// `true` when the task is not done and the calendar day is past the end date.
@@ -375,11 +525,29 @@ struct Task: Identifiable, Hashable, Codable {
         case .repeatable:
             return "Repeatable"
         case .kpi:
-            if let kpiTarget, let kpiUnit, !kpiUnit.isEmpty {
-                return "KPI \(kpiTarget) \(kpiUnit)"
+            var parts: [String] = []
+            if let label = kpiCounterLabel {
+                parts.append(label)
             }
-            return "KPI"
+            if let rounds = kpiRoundsLabel {
+                parts.append(rounds)
+            }
+            return parts.isEmpty ? "Counted" : parts.joined(separator: " · ")
         }
+    }
+
+    var kpiCounterLabel: String? {
+        guard cadence == .kpi, let target = kpiTarget else { return nil }
+        return "\(kpiCount)/\(target)"
+    }
+
+    var kpiRoundsLabel: String? {
+        guard cadence == .kpi, let rounds = kpiRoundsRemaining else { return nil }
+        if rounds == 0, status != .done {
+            return "Final round"
+        }
+        guard rounds > 0 else { return nil }
+        return rounds == 1 ? "1 round left" : "\(rounds) rounds left"
     }
 }
 
@@ -462,6 +630,20 @@ enum TaskEnergy: String, CaseIterable, Identifiable, Hashable, Codable {
 
     var isMultitaskable: Bool {
         maxParallelGroupSize > 1
+    }
+
+    /// Smallest MT-n that allows `count` tasks in one parallel bundle (2 → MT-2 … 4 → MT-4).
+    static func multitaskEnergy(forParallelBundleCount count: Int) -> TaskEnergy? {
+        switch count {
+        case 2:
+            .multitask2
+        case 3:
+            .multitask3
+        case 4:
+            .multitask4
+        default:
+            nil
+        }
     }
 
     var accent: Color {
@@ -695,6 +877,7 @@ enum ActivityKind: String, CaseIterable, Identifiable, Hashable, Codable {
     case waiting
     case completed
     case switched
+    case counted
     case focusRated
     case qualityRated
 
@@ -712,6 +895,8 @@ enum ActivityKind: String, CaseIterable, Identifiable, Hashable, Codable {
             "Completed"
         case .switched:
             "Switched"
+        case .counted:
+            "Counted"
         case .focusRated:
             "Focus"
         case .qualityRated:
@@ -764,8 +949,10 @@ struct ProjectContext: Identifiable, Hashable {
     var jobPalette: JobPalette
     var project: Project
 
-    var jobColor: Color { jobPalette.color }
-    var openTaskCount: Int { project.tasks.filter { $0.status != .done }.count }
+    var jobColor: Color {
+        jobPalette.color
+    }
+    var openTaskCount: Int { project.tasks.filter { !$0.isArchived && $0.status != .done }.count }
     var doneTaskCount: Int { project.tasks.filter { $0.status == .done }.count }
     var completionPercent: Double {
         guard !project.tasks.isEmpty else { return 0 }
@@ -784,7 +971,9 @@ struct TaskContext: Identifiable, Hashable {
     var jobPalette: JobPalette
     var task: Task
 
-    var jobColor: Color { jobPalette.color }
+    var jobColor: Color {
+        jobID == nil ? TurboTheme.inboxAccent : jobPalette.color
+    }
 
     /// Shown in list meta lines (skips empty segments).
     var metaSubtitleParts: [String] {

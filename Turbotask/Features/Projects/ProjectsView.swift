@@ -6,7 +6,9 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Date sheet payload
 
@@ -109,38 +111,52 @@ struct ProjectsView: View {
             if focusedJobID == nil {
                 focusedJobID = store.jobs.first?.id
             }
-            syncSelectionToJob()
-            syncProjectGridKeyboardState()
             reinstallProjectsKeyboardMonitor()
+            _Concurrency.Task { @MainActor in
+                syncProjectGridKeyboardState()
+                syncSelectionToJob()
+            }
         }
         .onDisappear {
             TypeaheadListKeyboard.remove(projectsKeyboardToken.monitor)
             projectsKeyboardToken.monitor = nil
         }
         .onChange(of: focusedJobID) { _, _ in
-            syncSelectionToJob()
-            syncProjectGridKeyboardState()
+            _Concurrency.Task { @MainActor in
+                syncProjectGridKeyboardState()
+                syncSelectionToJob()
+            }
         }
         .onChange(of: store.jobs.count) { _, _ in
             if let jid = focusedJobID, !store.jobs.contains(where: { $0.id == jid }) {
                 focusedJobID = store.jobs.first?.id
             }
-            syncSelectionToJob()
-            syncProjectGridKeyboardState()
+            _Concurrency.Task { @MainActor in
+                syncProjectGridKeyboardState()
+                syncSelectionToJob()
+            }
         }
         .onChange(of: store.jobs) { _, _ in
-            syncSelectionToJob()
-            syncProjectGridKeyboardState()
+            _Concurrency.Task { @MainActor in
+                syncProjectGridKeyboardState()
+                syncSelectionToJob()
+            }
         }
         .onChange(of: store.projectsQuery.search) { _, _ in
-            syncProjectGridKeyboardState()
+            _Concurrency.Task { @MainActor in
+                syncProjectGridKeyboardState()
+            }
         }
         .onChange(of: store.projectsQuery.sort) { _, _ in
-            syncProjectGridKeyboardState()
+            _Concurrency.Task { @MainActor in
+                syncProjectGridKeyboardState()
+            }
         }
         .onChange(of: store.selectedScreen) { _, screen in
             guard screen == .projects else { return }
-            syncProjectGridKeyboardState()
+            _Concurrency.Task { @MainActor in
+                syncProjectGridKeyboardState()
+            }
             reinstallProjectsKeyboardMonitor()
         }
         .sheet(item: $dateEditPayload) { payload in
@@ -173,13 +189,19 @@ struct ProjectsView: View {
             HStack(spacing: 10) {
                 IdentifiedTextField(
                     identifier: TypeaheadFieldID.projectsRailSearch,
-                    text: $store.projectsQuery.search,
+                    text: Binding(
+                        get: { store.projectsQuery.search },
+                        set: { val in _Concurrency.Task { @MainActor in store.projectsQuery.search = val } }
+                    ),
                     placeholder: "Filter projects…"
                 )
                 .frame(height: 24)
                 .frame(maxWidth: 280)
 
-                Picker("Sort", selection: $store.projectsQuery.sort) {
+                Picker("Sort", selection: Binding(
+                    get: { store.projectsQuery.sort },
+                    set: { val in _Concurrency.Task { @MainActor in store.projectsQuery.sort = val } }
+                )) {
                     ForEach(TurboTaskStore.ProjectSortOption.allCases) { opt in
                         Text(opt.title).tag(opt)
                     }
@@ -197,8 +219,6 @@ struct ProjectsView: View {
                 }
             }
 
-            TrainingWheelsHint(text: "Filter focused: ↑ ↓ and Return picks a project tile. Elsewhere on this page: ← → switch job, ↑ ↓ move selected project (when “Arrow keys in search lists” is on in Settings).")
-                .padding(.top, 4)
         }
         .padding(.bottom, 16)
     }
@@ -265,7 +285,9 @@ struct ProjectsView: View {
                                             && TypeaheadListKeyboard.firstResponderMatchesFieldID(TypeaheadFieldID.projectsRailSearch),
                                         onSelect: {
                                             store.select(.project(jobID: ctx.jobID, projectID: ctx.project.id))
-                                            projectGridHighlight.index = index
+                                            _Concurrency.Task { @MainActor in
+                                                projectGridHighlight.index = index
+                                            }
                                         },
                                         onRequestDelete: { pendingDeleteProject = ctx }
                                     )
@@ -299,7 +321,9 @@ struct ProjectsView: View {
                                                 && TypeaheadListKeyboard.firstResponderMatchesFieldID(TypeaheadFieldID.projectsRailSearch),
                                             onSelect: {
                                                 store.select(.project(jobID: ctx.jobID, projectID: ctx.project.id))
-                                                projectGridHighlight.index = index
+                                                _Concurrency.Task { @MainActor in
+                                                    projectGridHighlight.index = index
+                                                }
                                             },
                                             onRequestDelete: { pendingDeleteProject = ctx }
                                         )
@@ -322,7 +346,9 @@ struct ProjectsView: View {
                         withAnimation(.easeOut(duration: 0.12)) {
                             proxy.scrollTo(pid, anchor: .center)
                         }
-                        projectGridHighlight.index = idx
+                        _Concurrency.Task { @MainActor in
+                            projectGridHighlight.index = idx
+                        }
                     }
                 }
             }
@@ -703,6 +729,7 @@ private struct PortfolioProjectTile: View {
 
 private struct PortfolioInspector: View {
     @EnvironmentObject private var store: TurboTaskStore
+    @StateObject private var drag = ReorderDragState()
 
     let context: ProjectContext
     let onEditDates: (TaskContext) -> Void
@@ -711,17 +738,6 @@ private struct PortfolioInspector: View {
 
     private var tasks: [TaskContext] {
         store.taskContexts(jobID: context.jobID, projectID: context.project.id)
-            .sorted { lhs, rhs in
-                let ld = lhs.task.status == .done
-                let rd = rhs.task.status == .done
-                if ld != rd {
-                    return !ld
-                }
-                if lhs.task.priority != rhs.task.priority {
-                    return lhs.task.priority > rhs.task.priority
-                }
-                return lhs.task.title.localizedCaseInsensitiveCompare(rhs.task.title) == .orderedAscending
-            }
     }
 
     var body: some View {
@@ -732,8 +748,10 @@ private struct PortfolioInspector: View {
                         emoji: Binding(
                             get: { context.project.iconEmoji },
                             set: { newEmoji in
-                                store.updateProject(jobID: context.jobID, projectID: context.project.id) {
-                                    $0.iconEmoji = newEmoji
+                                _Concurrency.Task { @MainActor in
+                                    store.updateProject(jobID: context.jobID, projectID: context.project.id) {
+                                        $0.iconEmoji = newEmoji
+                                    }
                                 }
                             }
                         )
@@ -744,8 +762,10 @@ private struct PortfolioInspector: View {
                             text: Binding(
                                 get: { context.project.title },
                                 set: { t in
-                                    store.updateProject(jobID: context.jobID, projectID: context.project.id) {
-                                        $0.title = t
+                                    _Concurrency.Task { @MainActor in
+                                        store.updateProject(jobID: context.jobID, projectID: context.project.id) {
+                                            $0.title = t
+                                        }
                                     }
                                 }
                             )
@@ -759,8 +779,10 @@ private struct PortfolioInspector: View {
                             text: Binding(
                                 get: { context.project.outcome },
                                 set: { o in
-                                    store.updateProject(jobID: context.jobID, projectID: context.project.id) {
-                                        $0.outcome = o
+                                    _Concurrency.Task { @MainActor in
+                                        store.updateProject(jobID: context.jobID, projectID: context.project.id) {
+                                            $0.outcome = o
+                                        }
                                     }
                                 }
                             ),
@@ -791,16 +813,35 @@ private struct PortfolioInspector: View {
                     ForEach(tasks) { tctx in
                         PortfolioTaskRow(
                             context: tctx,
+                            drag: drag,
                             onSelect: { store.selectTask(tctx) },
                             onToggleNow: { store.toggleTaskNow(tctx) },
                             onEditDates: { onEditDates(tctx) },
                             onEditTask: { onEditTask(tctx) }
                         )
                         .environmentObject(store)
+                        .overlay(alignment: .top) {
+                            if drag.draggedID != nil, !drag.hoverIsEnd, drag.hoverTargetID == tctx.task.id {
+                                ReorderDropLine()
+                            }
+                        }
+                        .onDrop(of: [.text], delegate: RowReorderDropDelegate(rowID: tctx.task.id, drag: drag) { movingID in
+                            store.reorderProjectTask(context.jobID, projectID: context.project.id, movingTaskID: movingID, before: tctx.task.id)
+                        })
                         if tctx.task.id != tasks.last?.task.id {
                             Divider().opacity(0.35)
                         }
                     }
+
+                    Color.clear
+                        .frame(maxWidth: .infinity).frame(height: 14)
+                        .contentShape(Rectangle())
+                        .overlay(alignment: .top) {
+                            if drag.draggedID != nil, drag.hoverIsEnd { ReorderDropLine() }
+                        }
+                        .onDrop(of: [.text], delegate: EndReorderDropDelegate(drag: drag) { movingID in
+                            store.reorderProjectTaskToEnd(context.jobID, projectID: context.project.id, movingTaskID: movingID)
+                        })
                 }
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -827,6 +868,7 @@ private struct PortfolioTaskRow: View {
     @EnvironmentObject private var store: TurboTaskStore
 
     let context: TaskContext
+    @ObservedObject var drag: ReorderDragState
     let onSelect: () -> Void
     let onToggleNow: () -> Void
     let onEditDates: () -> Void
@@ -842,6 +884,22 @@ private struct PortfolioTaskRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
+            ReorderHandle()
+                .opacity(isSelected ? 0.5 : 0.2)
+                .onDrag {
+                    drag.draggedID = context.task.id
+                    return NSItemProvider(object: context.task.id.uuidString as NSString)
+                } preview: {
+                    Text(context.task.title)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(TurboTheme.ink)
+                        .lineLimit(1)
+                        .frame(maxWidth: 200, alignment: .leading)
+                        .padding(6)
+                        .background(TurboTheme.cardFill)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+
             TaskStatusRowIndicator(
                 status: context.task.status,
                 jobColor: context.jobColor,
@@ -933,14 +991,16 @@ private struct TaskPlanDatesSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Plan dates")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(TurboTheme.ink)
-            Text("Informational only. Past due shows on the project board when not done.")
-                .font(.caption)
-                .foregroundStyle(TurboTheme.mutedInk)
-                .padding(.top, 4)
-                .padding(.bottom, 16)
+            HStack(spacing: 6) {
+                Text("Plan dates")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(TurboTheme.ink)
+                TurboInfoButton(
+                    title: "Plan dates",
+                    message: "These dates are informational. Past due is shown on the project board when the task is not done."
+                )
+            }
+            .padding(.bottom, 16)
 
             Form {
                 Toggle("Start date", isOn: $hasStart)

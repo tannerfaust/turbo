@@ -45,6 +45,8 @@ struct MetricsView: View {
 
                 statStrip
 
+                archiveStatusCard
+
                 if store.workedMinutesToday > 0 {
                     todayTimeLine
                 }
@@ -70,9 +72,15 @@ struct MetricsView: View {
                 .contentTransition(.numericText())
                 .accessibilityLabel("\(store.completionCount) tasks marked done in your workspace")
 
-            Text("tasks done")
-                .font(.title3.weight(.medium))
-                .foregroundStyle(TurboTheme.mutedInk)
+            HStack(spacing: 6) {
+                Text("tasks done")
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(TurboTheme.mutedInk)
+                TurboInfoButton(
+                    title: "Completion total",
+                    message: "Lifetime total counts every completion, including tasks later removed from the archive."
+                )
+            }
 
             if finishedThisWeek > 0 {
                 Text("\(finishedThisWeek) finished in the last 7 days")
@@ -106,11 +114,47 @@ struct MetricsView: View {
         )
     }
 
+    private var archiveStatusCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Text("Archive")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(TurboTheme.ink)
+                TurboInfoButton(
+                    title: "Archive metrics",
+                    message: archiveInfoMessage
+                )
+                Spacer(minLength: 0)
+                Text("\(store.archivedTaskContexts.count) tasks")
+                    .font(.subheadline.weight(.medium))
+                    .monospacedDigit()
+                    .foregroundStyle(TurboTheme.mutedInk)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(TurboTheme.nestedCardFill.opacity(0.55))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(TurboTheme.cardStroke.opacity(0.45), lineWidth: 1)
+                )
+        )
+    }
+
     private var statDivider: some View {
         Rectangle()
             .fill(TurboTheme.divider)
             .frame(width: 1)
             .frame(maxHeight: 36)
+    }
+
+    private var archiveInfoMessage: String {
+        if store.archivedTaskPurgeAfterDays > 0 {
+            return "Auto-delete archived tasks after \(store.archivedTaskPurgeAfterDays) days. Done and focus events stay in this dashboard."
+        }
+        return "Open Archive in the sidebar to review or restore. Purge timing is in Settings."
     }
 
     private func statCell(value: Int, label: String, hint: String) -> some View {

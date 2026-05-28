@@ -9,7 +9,7 @@ import Foundation
 enum FocusCardDensity: String, CaseIterable, Identifiable, Codable, Hashable {
     /// Current default: titles, hints, progress, next task, tools when present.
     case standard
-    /// Tighter type, hides secondary lines and tool strip.
+    /// Tighter type, keeps tools visible but trims secondary copy.
     case compact
     /// Single line feel: task name and energy/type only.
     case minimal

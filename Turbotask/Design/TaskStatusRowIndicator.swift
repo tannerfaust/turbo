@@ -56,23 +56,25 @@ private struct ActiveIndeterminateRing: View {
     var lineWidth: CGFloat
     var diameter: CGFloat
 
+    @State private var rotating = false
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: false)) { timeline in
-            let period = 2.15
-            let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
-            let angle = t * 360
-            ZStack {
-                Circle()
-                    .stroke(color.opacity(0.18), lineWidth: lineWidth)
-                Circle()
-                    .trim(from: 0, to: 0.27)
-                    .stroke(
-                        color,
-                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(angle - 90))
+        ZStack {
+            Circle()
+                .stroke(color.opacity(0.18), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: 0.27)
+                .stroke(
+                    color,
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
+                .rotationEffect(.degrees(rotating ? 270 : -90))
+        }
+        .frame(width: diameter, height: diameter)
+        .onAppear {
+            withAnimation(.linear(duration: 2.15).repeatForever(autoreverses: false)) {
+                rotating = true
             }
-            .frame(width: diameter, height: diameter)
         }
     }
 }
@@ -83,14 +85,17 @@ private struct WaitingGlyph: View {
     let color: Color
     let fontSize: CGFloat
 
+    @State private var pulsing = false
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.12, paused: false)) { timeline in
-            let wave = sin(timeline.date.timeIntervalSinceReferenceDate * 2.1)
-            let opacity = 0.52 + (wave + 1) * 0.24
-            Image(systemName: "hourglass")
-                .font(.system(size: fontSize, weight: .semibold))
-                .foregroundStyle(color.opacity(opacity))
-        }
+        Image(systemName: "hourglass")
+            .font(.system(size: fontSize, weight: .semibold))
+            .foregroundStyle(color.opacity(pulsing ? 0.76 : 0.52))
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+                    pulsing = true
+                }
+            }
     }
 }
 
@@ -98,14 +103,17 @@ private struct PausedGlyph: View {
     let color: Color
     let fontSize: CGFloat
 
+    @State private var pulsing = false
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.12, paused: false)) { timeline in
-            let wave = sin(timeline.date.timeIntervalSinceReferenceDate * 1.65)
-            let scale = 0.94 + (wave + 1) * 0.03
-            Image(systemName: "pause.fill")
-                .font(.system(size: fontSize, weight: .bold))
-                .foregroundStyle(color)
-                .scaleEffect(scale)
-        }
+        Image(systemName: "pause.fill")
+            .font(.system(size: fontSize, weight: .bold))
+            .foregroundStyle(color)
+            .scaleEffect(pulsing ? 1.0 : 0.94)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.9).repeatForever(autoreverses: true)) {
+                    pulsing = true
+                }
+            }
     }
 }

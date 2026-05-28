@@ -75,6 +75,38 @@ struct TurboMetricPill: View {
     }
 }
 
+struct TurboInfoButton: View {
+    let title: String
+    let message: String
+
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(TurboTheme.mutedInk)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(TurboTheme.ink)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(TurboTheme.mutedInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(width: 250, alignment: .leading)
+        }
+        .trainingWheelsTooltip(title)
+    }
+}
+
 struct TurboEmptyState: View {
     let title: String
     let actionTitle: String
@@ -119,8 +151,10 @@ struct TurboProgressBar: View {
 struct JobPaletteSwatchRow: View {
     @Binding var selection: JobPalette
 
+    private let columns = [GridItem(.adaptive(minimum: 30, maximum: 36), spacing: 8)]
+
     var body: some View {
-        HStack(spacing: 10) {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
             ForEach(JobPalette.allCases) { palette in
                 Button {
                     selection = palette

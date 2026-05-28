@@ -78,12 +78,12 @@ enum ExecutionPlanner {
             return [activeMultitask[0]]
         }
 
-        if let firstMultitask = multitaskCandidates.first {
-            return group(for: firstMultitask, candidates: multitaskCandidates)
-        }
-
         if let next = queued.first {
-            return [next]
+            guard next.task.energy.isMultitaskable else {
+                return [next]
+            }
+            let compatibleQueued = queued.filter { $0.task.energy.isMultitaskable }
+            return group(for: next, candidates: compatibleQueued)
         }
 
         return []

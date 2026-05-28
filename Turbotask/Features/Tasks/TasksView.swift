@@ -5,7 +5,18 @@
 //  Task registry: dense ledger of every task, distinct from Now’s card-first layout.
 //
 
+import AppKit
+import Combine
 import SwiftUI
+import UniformTypeIdentifiers
+
+private func textInputHasFocusForTasks() -> Bool {
+    guard let r = NSApp.keyWindow?.firstResponder else { return false }
+    if r is NSTextView { return true }
+    if r is NSTextField { return true }
+    let desc = String(describing: type(of: r))
+    return desc.contains("FieldEditor") || desc.contains("NSTextView")
+}
 
 // MARK: - Hub lens (presentation only; filtering is search + sort via store)
 
@@ -59,6 +70,8 @@ struct TasksView: View {
     @EnvironmentObject private var store: TurboTaskStore
     @State private var lens: TasksHubLens = .all
     @State private var editingTask: TaskContext?
+    @State private var tasksKeyMonitor: Any?
+    @StateObject private var taskDrag = ReorderDragState()
 
     private var filteredTasks: [TaskContext] {
         store.filteredTaskContexts
@@ -99,9 +112,13 @@ struct TasksView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(TurboTheme.background)
         .onAppear {
-            DispatchQueue.main.async {
+            _Concurrency.Task { @MainActor in
                 sanitizeTasksQueryForRegistry()
             }
+            installTasksKeyMonitor()
+        }
+        .onDisappear {
+            removeTasksKeyMonitor()
         }
         .sheet(item: $editingTask) { context in
             TaskEditorDialog(context: context)
@@ -143,9 +160,14 @@ struct TasksView: View {
 
     private var lensBar: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Group by")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(TurboTheme.mutedInk)
+            HStack(spacing: 6) {
+                Text("Group by")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TurboTheme.mutedInk)
+                if let lensHint {
+                    TurboInfoButton(title: "Grouping", message: lensHint)
+                }
+            }
             Picker("Group by", selection: $lens) {
                 ForEach(TasksHubLens.allCases) { option in
                     Text(option.title).tag(option)
@@ -153,18 +175,19 @@ struct TasksView: View {
             }
             .pickerStyle(.segmented)
             .accessibilityLabel("Group tasks by")
+        }
+    }
 
-            if lens == .byJob {
-                Text("One section per job. “Inbox & unassigned” is tasks with no job. Inside each job, tasks from every project and job-only tasks are listed together.")
-                    .font(.caption2)
-                    .foregroundStyle(TurboTheme.mutedInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if lens == .byProject {
-                Text("One section per project. “Job · tasks on job” means tasks not inside a project. Other sections use “Job · Project”.")
-                    .font(.caption2)
-                    .foregroundStyle(TurboTheme.mutedInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+    private var lensHint: String? {
+        switch lens {
+        case .all:
+            nil
+        case .byJob:
+            "One section per job. “Inbox & unassigned” is tasks with no job. Inside each job, tasks from every project and job-only tasks are listed together."
+        case .byProject:
+            "One section per project. “Job · tasks on job” means tasks not inside a project. Other sections use “Job · Project”."
+        case .byStatus:
+            "Groups tasks by their current status regardless of job or project."
         }
     }
 
@@ -185,6 +208,10 @@ struct TasksView: View {
                     )
             }
             .frame(maxWidth: .infinity)
+
+            Toggle("Archived", isOn: tasksIncludeArchivedBinding)
+                .toggleStyle(.checkbox)
+                .help("Show archived tasks in this registry. Use the Archive page in the sidebar for a dedicated list.")
 
             Picker("Sort", selection: tasksSortBinding) {
                 ForEach(TurboTaskStore.TaskSortOption.allCases) { option in
@@ -215,6 +242,7 @@ struct TasksView: View {
                     case .task(let context):
                         TasksRegistryRow(
                             context: context,
+                            drag: taskDrag,
                             isSelected: isRowSelected(context),
                             isTypeaheadFocus: false,
                             onSelect: { select(context) },
@@ -222,8 +250,26 @@ struct TasksView: View {
                             onEdit: { editingTask = context }
                         )
                         .environmentObject(store)
+                        .overlay(alignment: .top) {
+                            if taskDrag.draggedID != nil, !taskDrag.hoverIsEnd, taskDrag.hoverTargetID == context.task.id {
+                                ReorderDropLine()
+                            }
+                        }
+                        .onDrop(of: [.text], delegate: RowReorderDropDelegate(rowID: context.task.id, drag: taskDrag) { movingID in
+                            reorderTaskInContainer(movingID, before: context)
+                        })
                     }
                 }
+
+                Color.clear
+                    .frame(maxWidth: .infinity).frame(height: 18)
+                    .contentShape(Rectangle())
+                    .overlay(alignment: .top) {
+                        if taskDrag.draggedID != nil, taskDrag.hoverIsEnd { ReorderDropLine() }
+                    }
+                    .onDrop(of: [.text], delegate: EndReorderDropDelegate(drag: taskDrag) { movingID in
+                        reorderTaskToEndInContainer(movingID)
+                    })
             }
             .overlay(alignment: .top) {
                 Rectangle()
@@ -232,6 +278,27 @@ struct TasksView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func reorderTaskInContainer(_ movingID: UUID, before target: TaskContext) {
+        guard let moving = filteredTasks.first(where: { $0.task.id == movingID }) else { return }
+        guard moving.jobID == target.jobID, moving.projectID == target.projectID else { return }
+        guard let jobID = target.jobID else { return }
+        if let projectID = target.projectID {
+            store.reorderProjectTask(jobID, projectID: projectID, movingTaskID: movingID, before: target.task.id)
+        } else {
+            store.reorderJobTask(jobID, movingTaskID: movingID, before: target.task.id)
+        }
+    }
+
+    private func reorderTaskToEndInContainer(_ movingID: UUID) {
+        guard let moving = filteredTasks.first(where: { $0.task.id == movingID }) else { return }
+        guard let jobID = moving.jobID else { return }
+        if let projectID = moving.projectID {
+            store.reorderProjectTaskToEnd(jobID, projectID: projectID, movingTaskID: movingID)
+        } else {
+            store.reorderJobTaskToEnd(jobID, movingTaskID: movingID)
+        }
     }
 
     private func isRowSelected(_ context: TaskContext) -> Bool {
@@ -247,9 +314,11 @@ struct TasksView: View {
             get: { store.tasksQuery.search },
             set: { newValue in
                 guard store.tasksQuery.search != newValue else { return }
-                var query = store.tasksQuery
-                query.search = newValue
-                store.tasksQuery = query
+                _Concurrency.Task { @MainActor in
+                    var query = store.tasksQuery
+                    query.search = newValue
+                    store.tasksQuery = query
+                }
             }
         )
     }
@@ -259,11 +328,87 @@ struct TasksView: View {
             get: { store.tasksQuery.sort },
             set: { newValue in
                 guard store.tasksQuery.sort != newValue else { return }
-                var query = store.tasksQuery
-                query.sort = newValue
-                store.tasksQuery = query
+                _Concurrency.Task { @MainActor in
+                    var query = store.tasksQuery
+                    query.sort = newValue
+                    store.tasksQuery = query
+                }
             }
         )
+    }
+
+    private var tasksIncludeArchivedBinding: Binding<Bool> {
+        Binding(
+            get: { store.tasksQuery.includeArchivedTasks },
+            set: { newValue in
+                guard store.tasksQuery.includeArchivedTasks != newValue else { return }
+                _Concurrency.Task { @MainActor in
+                    var query = store.tasksQuery
+                    query.includeArchivedTasks = newValue
+                    store.tasksQuery = query
+                }
+            }
+        )
+    }
+
+    private func moveTaskSelection(_ delta: Int) {
+        let tasks = filteredTasks
+        guard !tasks.isEmpty else { return }
+
+        if let selectedID = store.selectedTaskID,
+           let currentIdx = tasks.firstIndex(where: { $0.task.id == selectedID }) {
+            let nextIdx = min(max(0, currentIdx + delta), tasks.count - 1)
+            let ctx = tasks[nextIdx]
+            store.select(.task(jobID: ctx.jobID, projectID: ctx.projectID, taskID: ctx.task.id))
+        } else if let first = tasks.first {
+            store.select(.task(jobID: first.jobID, projectID: first.projectID, taskID: first.task.id))
+        }
+    }
+
+    private func installTasksKeyMonitor() {
+        guard tasksKeyMonitor == nil else { return }
+        let st = store
+        tasksKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard Thread.isMainThread else { return event }
+            guard st.selectedScreen == .tasks else { return event }
+            guard st.composer == nil else { return event }
+
+            if textInputHasFocusForTasks() { return event }
+
+            let code = event.keyCode
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+            if flags.contains(.command) { return event }
+
+            switch code {
+            case 125, 124: // down, right
+                MainActor.assumeIsolated {
+                    moveTaskSelection(1)
+                }
+                return nil
+            case 126, 123: // up, left
+                MainActor.assumeIsolated {
+                    moveTaskSelection(-1)
+                }
+                return nil
+            case 36: // return - edit
+                MainActor.assumeIsolated {
+                    if let ctx = st.selectedTaskContext {
+                        editingTask = ctx
+                    }
+                }
+                return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    private func removeTasksKeyMonitor() {
+        if let monitor = tasksKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        tasksKeyMonitor = nil
     }
 
     private func sanitizeTasksQueryForRegistry() {
@@ -274,6 +419,7 @@ struct TasksView: View {
             status: nil,
             energy: nil,
             onlyNow: false,
+            includeArchivedTasks: store.tasksQuery.includeArchivedTasks,
             sort: store.tasksQuery.sort
         )
         guard store.tasksQuery != sanitized else { return }
@@ -297,13 +443,10 @@ struct TasksView: View {
             var rows: [TasksHubRowItem] = []
             for jid in order {
                 let accent = tasks.first(where: { $0.jobID == jid })?.jobColor
-                let subtitle = jid == nil
-                    ? "Tasks without a job (inbox)"
-                    : "All tasks on this job — every project plus job-only"
                 rows.append(.section(TasksHubSectionPayload(
                     id: "job:\(jid?.uuidString ?? "inbox")",
                     title: jobSectionTitle(jobID: jid, from: tasks),
-                    subtitle: subtitle,
+                    subtitle: nil,
                     accent: accent
                 )))
                 for t in tasks where t.jobID == jid {
@@ -324,13 +467,10 @@ struct TasksView: View {
             var rows: [TasksHubRowItem] = []
             for k in order {
                 let accent = tasks.first(where: { $0.jobID == k.jobID && $0.projectID == k.projectID })?.jobColor
-                let subtitle = k.projectID == nil
-                    ? "Not inside a project — directly on the job"
-                    : "Tasks assigned to this project"
                 rows.append(.section(TasksHubSectionPayload(
                     id: "jp:\(k.jobID?.uuidString ?? "nil"):\(k.projectID?.uuidString ?? "nil")",
                     title: projectSectionTitle(key: k, from: tasks),
-                    subtitle: subtitle,
+                    subtitle: nil,
                     accent: accent
                 )))
                 for t in tasks where t.jobID == k.jobID && t.projectID == k.projectID {
@@ -423,6 +563,7 @@ private struct TasksRegistryRow: View {
     @EnvironmentObject private var store: TurboTaskStore
 
     let context: TaskContext
+    @ObservedObject var drag: ReorderDragState
     let isSelected: Bool
     let isTypeaheadFocus: Bool
     let onSelect: () -> Void
@@ -431,6 +572,22 @@ private struct TasksRegistryRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            ReorderHandle()
+                .opacity(isSelected ? 0.5 : 0.15)
+                .onDrag {
+                    drag.draggedID = context.task.id
+                    return NSItemProvider(object: context.task.id.uuidString as NSString)
+                } preview: {
+                    Text(context.task.title)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(TurboTheme.ink)
+                        .lineLimit(1)
+                        .frame(maxWidth: 280, alignment: .leading)
+                        .padding(6)
+                        .background(TurboTheme.cardFill)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+
             Rectangle()
                 .fill(context.jobColor)
                 .frame(width: 3)
@@ -506,7 +663,8 @@ private struct TasksRegistryRow: View {
         if !context.jobTitle.isEmpty { parts.append(context.jobTitle) }
         if !context.projectTitle.isEmpty { parts.append(context.projectTitle) }
         let scope = parts.isEmpty ? "Inbox" : parts.joined(separator: " · ")
-        return "\(scope) · \(context.task.energy.shortTitle)"
+        let arch = context.task.isArchived ? "Archived · " : ""
+        return "\(arch)\(scope) · \(context.task.energy.shortTitle)"
     }
 
     private var rowBackground: Color {

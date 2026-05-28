@@ -6,7 +6,9 @@
 //  Visually distinct from Projects (rail + tiles + inspector).
 //
 
+import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Browser scope
 
@@ -34,20 +36,14 @@ struct JobsView: View {
     @StateObject private var rowHighlight = TypeaheadRowHighlight()
     @StateObject private var jobsListCount = TypeaheadLiveCount()
     @State private var jobsKeyMonitor: Any?
+    @StateObject private var jobDrag = ReorderDragState()
+    @StateObject private var taskDrag = ReorderDragState()
 
     private var visibleJobs: [Job] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        let filtered = store.jobs.filter { job in
-            guard !query.isEmpty else { return true }
-            return store.jobSearchText(jobID: job.id).contains(query)
-        }
-
-        return filtered.sorted { lhs, rhs in
-            let lhsOpen = store.jobOpenWorkCount(jobID: lhs.id)
-            let rhsOpen = store.jobOpenWorkCount(jobID: rhs.id)
-            if lhsOpen != rhsOpen { return lhsOpen > rhsOpen }
-            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        guard !query.isEmpty else { return store.jobs }
+        return store.jobs.filter { job in
+            store.jobSearchText(jobID: job.id).contains(query)
         }
     }
 
@@ -61,10 +57,8 @@ struct JobsView: View {
         switch scope {
         case .directTasks:
             return store.jobLevelTaskContexts(jobID: job.id)
-                .sorted(by: sortTasks)
         case .project(let pid):
             return store.taskContexts(jobID: job.id, projectID: pid)
-                .sorted(by: sortTasks)
         }
     }
 
@@ -140,11 +134,13 @@ struct JobsView: View {
             if browserJobID == nil {
                 browserJobID = visibleJobs.first?.id ?? store.jobs.first?.id
             }
-            if let id = browserJobID {
-                store.select(.job(id))
-            }
-            jobsListCount.value = visibleJobs.count
             installKeyMonitor()
+            _Concurrency.Task { @MainActor in
+                jobsListCount.value = visibleJobs.count
+                if let id = browserJobID {
+                    store.select(.job(id))
+                }
+            }
         }
         .onDisappear {
             TypeaheadListKeyboard.remove(jobsKeyMonitor)
@@ -152,18 +148,24 @@ struct JobsView: View {
         }
         .onChange(of: store.selectedScreen) { _, screen in
             guard screen == .jobs else { return }
-            jobsListCount.value = visibleJobs.count
+            _Concurrency.Task { @MainActor in
+                jobsListCount.value = visibleJobs.count
+            }
             installKeyMonitor()
         }
         .onChange(of: search) { _, _ in
-            rowHighlight.reset()
-            let c = visibleJobs.count
-            jobsListCount.value = c
-            rowHighlight.clamp(count: c)
+            _Concurrency.Task { @MainActor in
+                rowHighlight.reset()
+                let c = visibleJobs.count
+                jobsListCount.value = c
+                rowHighlight.clamp(count: c)
+            }
         }
         .onChange(of: visibleJobs.count) { _, c in
-            jobsListCount.value = c
-            rowHighlight.clamp(count: c)
+            _Concurrency.Task { @MainActor in
+                jobsListCount.value = c
+                rowHighlight.clamp(count: c)
+            }
             if let jid = browserJobID, !visibleJobs.contains(where: { $0.id == jid }) {
                 browserJobID = visibleJobs.first?.id
                 scope = .directTasks
@@ -172,12 +174,16 @@ struct JobsView: View {
         .onChange(of: browserJobID) { _, newID in
             scope = .directTasks
             if let id = newID {
-                store.select(.job(id))
+                _Concurrency.Task { @MainActor in
+                    store.select(.job(id))
+                }
             }
         }
         .onChange(of: store.jobs.count) { _, _ in
-            jobsListCount.value = visibleJobs.count
-            rowHighlight.clamp(count: visibleJobs.count)
+            _Concurrency.Task { @MainActor in
+                jobsListCount.value = visibleJobs.count
+                rowHighlight.clamp(count: visibleJobs.count)
+            }
         }
         .onChange(of: store.jobs) { _, _ in
             if case .project(let pid) = scope,
@@ -185,7 +191,9 @@ struct JobsView: View {
                let job = store.jobs.first(where: { $0.id == jid }),
                !job.projects.contains(where: { $0.id == pid }) {
                 scope = .directTasks
-                store.select(.job(jid))
+                _Concurrency.Task { @MainActor in
+                    store.select(.job(jid))
+                }
             }
         }
     }
@@ -255,23 +263,43 @@ struct JobsView: View {
                 .padding(.bottom, 8)
 
             ScrollViewReader { proxy in
-                List(selection: $browserJobID) {
-                    ForEach(Array(visibleJobs.enumerated()), id: \.element.id) { index, job in
-                        jobDirectoryRow(job: job, index: index)
-                            .id(job.id)
-                            .tag(job.id as UUID?)
-                            .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(directoryRowBackground(index: index, jobID: job.id))
-                            .contextMenu {
-                                Button("Delete job…") {
-                                    pendingDeleteJob = job
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(visibleJobs.enumerated()), id: \.element.id) { index, job in
+                            jobDirectoryRow(job: job, index: index)
+                                .id(job.id)
+                                .overlay(alignment: .top) {
+                                    if jobDrag.draggedID != nil, !jobDrag.hoverIsEnd, jobDrag.hoverTargetID == job.id {
+                                        ReorderDropLine()
+                                    }
                                 }
+                                .onDrop(of: [.text], delegate: RowReorderDropDelegate(rowID: job.id, drag: jobDrag) { movingID in
+                                    store.reorderJob(movingID, before: job.id)
+                                })
+                                .padding(.horizontal, 8)
+                                .background(directoryRowBackground(index: index, jobID: job.id))
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    browserJobID = job.id
+                                }
+                                .contextMenu {
+                                    Button("Delete job…") {
+                                        pendingDeleteJob = job
+                                    }
+                                }
+                        }
+
+                        Color.clear
+                            .frame(maxWidth: .infinity).frame(height: 24)
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .top) {
+                                if jobDrag.draggedID != nil, jobDrag.hoverIsEnd { ReorderDropLine() }
                             }
+                            .onDrop(of: [.text], delegate: EndReorderDropDelegate(drag: jobDrag) { movingID in
+                                store.reorderJobToEnd(movingID)
+                            })
                     }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
                 .onReceive(rowHighlight.$index) { newValue in
                     guard visibleJobs.indices.contains(newValue) else { return }
                     withAnimation(.easeOut(duration: 0.12)) {
@@ -308,7 +336,23 @@ struct JobsView: View {
     }
 
     private func jobDirectoryRow(job: Job, index: Int) -> some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 6) {
+            ReorderHandle()
+                .opacity(browserJobID == job.id ? 0.5 : 0.2)
+                .onDrag {
+                    jobDrag.draggedID = job.id
+                    return NSItemProvider(object: job.id.uuidString as NSString)
+                } preview: {
+                    Text(job.title)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(TurboTheme.ink)
+                        .lineLimit(1)
+                        .frame(maxWidth: 200, alignment: .leading)
+                        .padding(6)
+                        .background(TurboTheme.cardFill)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+
             RoundedRectangle(cornerRadius: 2, style: .continuous)
                 .fill(job.palette.color)
                 .frame(width: 5)
@@ -323,7 +367,6 @@ struct JobsView: View {
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(TurboTheme.mutedInk)
             }
-            .padding(.leading, 10)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -386,7 +429,7 @@ struct JobsView: View {
                     "Job title",
                     text: Binding(
                         get: { job.title },
-                        set: { v in store.updateJob(jobID: job.id) { $0.title = v } }
+                        set: { v in _Concurrency.Task { @MainActor in store.updateJob(jobID: job.id) { $0.title = v } } }
                     )
                 )
                 .font(.title3.weight(.semibold))
@@ -422,7 +465,7 @@ struct JobsView: View {
                 "Summary — what this job is for",
                 text: Binding(
                     get: { job.summary },
-                    set: { v in store.updateJob(jobID: job.id) { $0.summary = v } }
+                    set: { v in _Concurrency.Task { @MainActor in store.updateJob(jobID: job.id) { $0.summary = v } } }
                 ),
                 axis: .vertical
             )
@@ -439,7 +482,7 @@ struct JobsView: View {
                 scopeChip(
                     title: "Direct tasks",
                     subtitle: "On job only",
-                    count: job.jobTasks.filter { $0.status != .done }.count,
+                    count: job.jobTasks.filter { !$0.isArchived && $0.status != .done }.count,
                     selected: scope == .directTasks
                 ) {
                     scope = .directTasks
@@ -447,7 +490,7 @@ struct JobsView: View {
                 }
 
                 ForEach(job.projects.sorted(by: { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending })) { project in
-                    let open = project.tasks.filter { $0.status != .done }.count
+                    let open = project.tasks.filter { !$0.isArchived && $0.status != .done }.count
                     scopeChip(
                         title: project.displayTitle,
                         subtitle: project.outcome.isEmpty ? "Project" : String(project.outcome.prefix(36)) + (project.outcome.count > 36 ? "…" : ""),
@@ -536,20 +579,58 @@ struct JobsView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         workbenchTaskHeaderRow
                         ForEach(displayedTasks) { ctx in
-                            JobsWorkbenchTaskRow(context: ctx, onEdit: { editingTask = ctx })
+                            JobsWorkbenchTaskRow(context: ctx, drag: taskDrag, onEdit: { editingTask = ctx })
                                 .environmentObject(store)
+                                .overlay(alignment: .top) {
+                                    if taskDrag.draggedID != nil, !taskDrag.hoverIsEnd, taskDrag.hoverTargetID == ctx.task.id {
+                                        ReorderDropLine()
+                                    }
+                                }
+                                .onDrop(of: [.text], delegate: RowReorderDropDelegate(rowID: ctx.task.id, drag: taskDrag) { movingID in
+                                    reorderWorkbenchTask(movingID, before: ctx.task.id)
+                                })
                             if ctx.task.id != displayedTasks.last?.task.id {
                                 Rectangle()
                                     .fill(TurboTheme.divider.opacity(0.35))
                                     .frame(height: 1)
                             }
                         }
+
+                        Color.clear
+                            .frame(maxWidth: .infinity).frame(height: 18)
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .top) {
+                                if taskDrag.draggedID != nil, taskDrag.hoverIsEnd { ReorderDropLine() }
+                            }
+                            .onDrop(of: [.text], delegate: EndReorderDropDelegate(drag: taskDrag) { movingID in
+                                reorderWorkbenchTaskToEnd(movingID)
+                            })
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func reorderWorkbenchTask(_ movingID: UUID, before targetID: UUID) {
+        guard let jobID = browserJobID else { return }
+        switch scope {
+        case .directTasks:
+            store.reorderJobTask(jobID, movingTaskID: movingID, before: targetID)
+        case .project(let pid):
+            store.reorderProjectTask(jobID, projectID: pid, movingTaskID: movingID, before: targetID)
+        }
+    }
+
+    private func reorderWorkbenchTaskToEnd(_ movingID: UUID) {
+        guard let jobID = browserJobID else { return }
+        switch scope {
+        case .directTasks:
+            store.reorderJobTaskToEnd(jobID, movingTaskID: movingID)
+        case .project(let pid):
+            store.reorderProjectTaskToEnd(jobID, projectID: pid, movingTaskID: movingID)
+        }
     }
 
     private var workbenchTaskHeaderRow: some View {
@@ -641,6 +722,7 @@ private struct JobsWorkbenchTaskRow: View {
     @EnvironmentObject private var store: TurboTaskStore
 
     let context: TaskContext
+    @ObservedObject var drag: ReorderDragState
     let onEdit: () -> Void
 
     private var isSelected: Bool {
@@ -649,6 +731,22 @@ private struct JobsWorkbenchTaskRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            ReorderHandle()
+                .opacity(isSelected ? 0.5 : 0.2)
+                .onDrag {
+                    drag.draggedID = context.task.id
+                    return NSItemProvider(object: context.task.id.uuidString as NSString)
+                } preview: {
+                    Text(context.task.title)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(TurboTheme.ink)
+                        .lineLimit(1)
+                        .frame(maxWidth: 280, alignment: .leading)
+                        .padding(6)
+                        .background(TurboTheme.cardFill)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+
             TaskStatusRowIndicator(
                 status: context.task.status,
                 jobColor: context.jobColor,

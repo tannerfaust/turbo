@@ -64,6 +64,10 @@ enum TurboTheme {
         light: NSColor(white: 0.898, alpha: 1),
         dark: NSColor(white: 0.182, alpha: 1)
     )
+    static let inboxAccent = Color.turbo(
+        light: NSColor(white: 0.88, alpha: 1),
+        dark: NSColor(white: 0.98, alpha: 1)
+    )
     static let rowHover = Color.turbo(
         light: NSColor(white: 0.945, alpha: 1),
         dark: NSColor(white: 0.162, alpha: 1)

@@ -37,6 +37,39 @@ struct TaskRowContextMenuItems: View {
                 )
             }
 
+            Menu {
+                ForEach(TaskEnergy.allCases) { energy in
+                    Button {
+                        store.setTaskEnergy(context, energy: energy)
+                    } label: {
+                        HStack {
+                            Text(energy.title)
+                            if context.task.energy == energy {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Label("Change Type", systemImage: "arrow.triangle.swap")
+            }
+
+            if context.task.isArchived {
+                Button {
+                    store.selectTask(context)
+                    store.setTaskArchived(context, archived: false)
+                } label: {
+                    Label("Restore from archive", systemImage: "tray.and.arrow.up")
+                }
+            } else {
+                Button {
+                    store.selectTask(context)
+                    store.setTaskArchived(context, archived: true)
+                } label: {
+                    Label("Archive task", systemImage: "archivebox")
+                }
+            }
+
             Divider()
 
             Button(role: .destructive) {

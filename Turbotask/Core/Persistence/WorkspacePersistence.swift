@@ -7,6 +7,14 @@
 
 import Foundation
 
+/// AppKit window frame for the floating focus card (origin is bottom-left, like `NSRect`).
+struct FocusOverlayWindowFrame: Codable, Equatable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+}
+
 /// Decodes legacy `weekPlanEntries` from older workspace files and discards them.
 private struct LegacyWeekPlanEntry: Codable {
     let id: UUID
@@ -22,6 +30,16 @@ struct WorkspaceSnapshot: Codable {
     var standaloneTasks: [Task]
     var history: [ActivityEvent]
     var dailyCapacityMinutes: Int
+    var dayBatteryStartMinutes: Int
+    var dayBatteryEndMinutes: Int
+    var dayBatteryShowsPercentageInMenuBar: Bool
+    var dayBatteryUsesWideMenuBarItem: Bool
+    /// 0 = off. Otherwise archive incomplete, non-active tasks after this many hours without activity log entries.
+    var taskAutoArchiveAfterIdleHours: Int
+    /// 0 = off. Otherwise archive **done** tasks this many full days after their last completion event.
+    var doneTaskAutoArchiveAfterDays: Int
+    /// 0 = never. Otherwise permanently remove archived tasks this many days after `archivedAt` (completion used as fallback when unset).
+    var archivedTaskPurgeAfterDays: Int
     var tasksPresentation: TasksPresentationState
     var themeMode: AppThemeMode
     var nowPinnedJobIDs: [UUID]
@@ -31,6 +49,11 @@ struct WorkspaceSnapshot: Codable {
     /// Projects the user removed from the Today scope bar.
     var nowSuppressedProjectIDs: [UUID]
     var focusCardDensity: FocusCardDensity
+    var newNowTaskPlacement: NewNowTaskPlacement
+    /// Spaces behavior for the floating focus card (`canJoinAllSpaces` vs current desktop only).
+    var focusOverlayPresenceMode: FocusOverlayPresenceMode
+    /// Last known `NSRect` of the focus overlay panel; used to restore position across hide/show and launches.
+    var focusOverlayWindowFrame: FocusOverlayWindowFrame?
     var trainingWheelsEnabled: Bool
     var typeaheadListNavigationEnabled: Bool
 
@@ -39,6 +62,13 @@ struct WorkspaceSnapshot: Codable {
         standaloneTasks: [Task] = [],
         history: [ActivityEvent],
         dailyCapacityMinutes: Int,
+        dayBatteryStartMinutes: Int = 8 * 60,
+        dayBatteryEndMinutes: Int = 0,
+        dayBatteryShowsPercentageInMenuBar: Bool = true,
+        dayBatteryUsesWideMenuBarItem: Bool = false,
+        taskAutoArchiveAfterIdleHours: Int = 0,
+        doneTaskAutoArchiveAfterDays: Int = 0,
+        archivedTaskPurgeAfterDays: Int = 0,
         tasksPresentation: TasksPresentationState = TasksPresentationState(),
         themeMode: AppThemeMode = .system,
         nowPinnedJobIDs: [UUID] = [],
@@ -46,6 +76,9 @@ struct WorkspaceSnapshot: Codable {
         nowSuppressedJobIDs: [UUID] = [],
         nowSuppressedProjectIDs: [UUID] = [],
         focusCardDensity: FocusCardDensity = .standard,
+        newNowTaskPlacement: NewNowTaskPlacement = .bottom,
+        focusOverlayPresenceMode: FocusOverlayPresenceMode = .allDesktops,
+        focusOverlayWindowFrame: FocusOverlayWindowFrame? = nil,
         trainingWheelsEnabled: Bool = true,
         typeaheadListNavigationEnabled: Bool = true
     ) {
@@ -53,6 +86,13 @@ struct WorkspaceSnapshot: Codable {
         self.standaloneTasks = standaloneTasks
         self.history = history
         self.dailyCapacityMinutes = dailyCapacityMinutes
+        self.dayBatteryStartMinutes = dayBatteryStartMinutes
+        self.dayBatteryEndMinutes = dayBatteryEndMinutes
+        self.dayBatteryShowsPercentageInMenuBar = dayBatteryShowsPercentageInMenuBar
+        self.dayBatteryUsesWideMenuBarItem = dayBatteryUsesWideMenuBarItem
+        self.taskAutoArchiveAfterIdleHours = taskAutoArchiveAfterIdleHours
+        self.doneTaskAutoArchiveAfterDays = doneTaskAutoArchiveAfterDays
+        self.archivedTaskPurgeAfterDays = archivedTaskPurgeAfterDays
         self.tasksPresentation = tasksPresentation
         self.themeMode = themeMode
         self.nowPinnedJobIDs = nowPinnedJobIDs
@@ -60,6 +100,9 @@ struct WorkspaceSnapshot: Codable {
         self.nowSuppressedJobIDs = nowSuppressedJobIDs
         self.nowSuppressedProjectIDs = nowSuppressedProjectIDs
         self.focusCardDensity = focusCardDensity
+        self.newNowTaskPlacement = newNowTaskPlacement
+        self.focusOverlayPresenceMode = focusOverlayPresenceMode
+        self.focusOverlayWindowFrame = focusOverlayWindowFrame
         self.trainingWheelsEnabled = trainingWheelsEnabled
         self.typeaheadListNavigationEnabled = typeaheadListNavigationEnabled
     }
@@ -69,6 +112,13 @@ struct WorkspaceSnapshot: Codable {
         case standaloneTasks
         case history
         case dailyCapacityMinutes
+        case dayBatteryStartMinutes
+        case dayBatteryEndMinutes
+        case dayBatteryShowsPercentageInMenuBar
+        case dayBatteryUsesWideMenuBarItem
+        case taskAutoArchiveAfterIdleHours
+        case doneTaskAutoArchiveAfterDays
+        case archivedTaskPurgeAfterDays
         case weekPlanEntries
         case tasksPresentation
         case themeMode
@@ -77,6 +127,9 @@ struct WorkspaceSnapshot: Codable {
         case nowSuppressedJobIDs
         case nowSuppressedProjectIDs
         case focusCardDensity
+        case newNowTaskPlacement
+        case focusOverlayPresenceMode
+        case focusOverlayWindowFrame
         case trainingWheelsEnabled
         case typeaheadListNavigationEnabled
     }
@@ -87,6 +140,13 @@ struct WorkspaceSnapshot: Codable {
         standaloneTasks = try container.decodeIfPresent([Task].self, forKey: .standaloneTasks) ?? []
         history = try container.decode([ActivityEvent].self, forKey: .history)
         dailyCapacityMinutes = try container.decodeIfPresent(Int.self, forKey: .dailyCapacityMinutes) ?? 540
+        dayBatteryStartMinutes = try container.decodeIfPresent(Int.self, forKey: .dayBatteryStartMinutes) ?? 8 * 60
+        dayBatteryEndMinutes = try container.decodeIfPresent(Int.self, forKey: .dayBatteryEndMinutes) ?? 0
+        dayBatteryShowsPercentageInMenuBar = try container.decodeIfPresent(Bool.self, forKey: .dayBatteryShowsPercentageInMenuBar) ?? true
+        dayBatteryUsesWideMenuBarItem = try container.decodeIfPresent(Bool.self, forKey: .dayBatteryUsesWideMenuBarItem) ?? false
+        taskAutoArchiveAfterIdleHours = try container.decodeIfPresent(Int.self, forKey: .taskAutoArchiveAfterIdleHours) ?? 0
+        doneTaskAutoArchiveAfterDays = try container.decodeIfPresent(Int.self, forKey: .doneTaskAutoArchiveAfterDays) ?? 0
+        archivedTaskPurgeAfterDays = try container.decodeIfPresent(Int.self, forKey: .archivedTaskPurgeAfterDays) ?? 0
         _ = try container.decodeIfPresent([LegacyWeekPlanEntry].self, forKey: .weekPlanEntries)
         tasksPresentation = try container.decodeIfPresent(TasksPresentationState.self, forKey: .tasksPresentation)
             ?? TasksPresentationState()
@@ -96,6 +156,10 @@ struct WorkspaceSnapshot: Codable {
         nowSuppressedJobIDs = try container.decodeIfPresent([UUID].self, forKey: .nowSuppressedJobIDs) ?? []
         nowSuppressedProjectIDs = try container.decodeIfPresent([UUID].self, forKey: .nowSuppressedProjectIDs) ?? []
         focusCardDensity = try container.decodeIfPresent(FocusCardDensity.self, forKey: .focusCardDensity) ?? .standard
+        newNowTaskPlacement = try container.decodeIfPresent(NewNowTaskPlacement.self, forKey: .newNowTaskPlacement) ?? .bottom
+        focusOverlayPresenceMode = try container.decodeIfPresent(FocusOverlayPresenceMode.self, forKey: .focusOverlayPresenceMode)
+            ?? .allDesktops
+        focusOverlayWindowFrame = try container.decodeIfPresent(FocusOverlayWindowFrame.self, forKey: .focusOverlayWindowFrame)
         trainingWheelsEnabled = try container.decodeIfPresent(Bool.self, forKey: .trainingWheelsEnabled) ?? true
         typeaheadListNavigationEnabled = try container.decodeIfPresent(Bool.self, forKey: .typeaheadListNavigationEnabled) ?? true
     }
@@ -106,6 +170,13 @@ struct WorkspaceSnapshot: Codable {
         try container.encode(standaloneTasks, forKey: .standaloneTasks)
         try container.encode(history, forKey: .history)
         try container.encode(dailyCapacityMinutes, forKey: .dailyCapacityMinutes)
+        try container.encode(dayBatteryStartMinutes, forKey: .dayBatteryStartMinutes)
+        try container.encode(dayBatteryEndMinutes, forKey: .dayBatteryEndMinutes)
+        try container.encode(dayBatteryShowsPercentageInMenuBar, forKey: .dayBatteryShowsPercentageInMenuBar)
+        try container.encode(dayBatteryUsesWideMenuBarItem, forKey: .dayBatteryUsesWideMenuBarItem)
+        try container.encode(taskAutoArchiveAfterIdleHours, forKey: .taskAutoArchiveAfterIdleHours)
+        try container.encode(doneTaskAutoArchiveAfterDays, forKey: .doneTaskAutoArchiveAfterDays)
+        try container.encode(archivedTaskPurgeAfterDays, forKey: .archivedTaskPurgeAfterDays)
         try container.encode(tasksPresentation, forKey: .tasksPresentation)
         try container.encode(themeMode, forKey: .themeMode)
         try container.encode(nowPinnedJobIDs, forKey: .nowPinnedJobIDs)
@@ -113,6 +184,9 @@ struct WorkspaceSnapshot: Codable {
         try container.encode(nowSuppressedJobIDs, forKey: .nowSuppressedJobIDs)
         try container.encode(nowSuppressedProjectIDs, forKey: .nowSuppressedProjectIDs)
         try container.encode(focusCardDensity, forKey: .focusCardDensity)
+        try container.encode(newNowTaskPlacement, forKey: .newNowTaskPlacement)
+        try container.encode(focusOverlayPresenceMode, forKey: .focusOverlayPresenceMode)
+        try container.encodeIfPresent(focusOverlayWindowFrame, forKey: .focusOverlayWindowFrame)
         try container.encode(trainingWheelsEnabled, forKey: .trainingWheelsEnabled)
         try container.encode(typeaheadListNavigationEnabled, forKey: .typeaheadListNavigationEnabled)
     }

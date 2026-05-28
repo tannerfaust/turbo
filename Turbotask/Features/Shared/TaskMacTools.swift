@@ -217,17 +217,15 @@ struct TaskToolsPickerSheet: View {
                 Text("Tools needed")
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(TurboTheme.ink)
+                TurboInfoButton(
+                    title: "Tools needed",
+                    message: "Pick Mac apps for reference. Turbotask stores their identities so icons can appear on tasks and the focus card."
+                )
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
             .padding(16)
-
-            Text("Choose Mac apps for reference (icons only).")
-                .font(.caption)
-                .foregroundStyle(TurboTheme.mutedInk)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
 
             IdentifiedTextField(
                 identifier: TypeaheadFieldID.toolsPickerSearch,
@@ -265,7 +263,9 @@ struct TaskToolsPickerSheet: View {
         .frame(minWidth: 420, minHeight: 480)
         .background(TurboTheme.backgroundRaised)
         .onAppear {
-            liveRows.update(all: apps, query: search)
+            _Concurrency.Task { @MainActor in
+                liveRows.update(all: apps, query: search)
+            }
             keyMonitor = TypeaheadListKeyboard.install(
                 store: store,
                 isSearchFocused: {
@@ -284,16 +284,22 @@ struct TaskToolsPickerSheet: View {
             keyMonitor = nil
         }
         .onChange(of: search) { _, _ in
-            liveRows.update(all: apps, query: search)
-            rowHighlight.reset()
-            rowHighlight.clamp(count: liveRows.rows.count)
+            _Concurrency.Task { @MainActor in
+                liveRows.update(all: apps, query: search)
+                rowHighlight.reset()
+                rowHighlight.clamp(count: liveRows.rows.count)
+            }
         }
         .onChange(of: apps) { _, _ in
-            liveRows.update(all: apps, query: search)
-            rowHighlight.clamp(count: liveRows.rows.count)
+            _Concurrency.Task { @MainActor in
+                liveRows.update(all: apps, query: search)
+                rowHighlight.clamp(count: liveRows.rows.count)
+            }
         }
         .onChange(of: liveRows.rows.count) { _, newCount in
-            rowHighlight.clamp(count: newCount)
+            _Concurrency.Task { @MainActor in
+                rowHighlight.clamp(count: newCount)
+            }
         }
         .task {
             apps = await withCheckedContinuation { (cont: CheckedContinuation<[InstalledMacApp], Never>) in

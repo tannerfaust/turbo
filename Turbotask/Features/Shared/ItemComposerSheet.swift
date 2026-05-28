@@ -29,7 +29,9 @@ struct ItemComposerSheet: View {
     @State private var taskIsScheduledNow = false
     @State private var taskRepeatEveryMinutes = 60
     @State private var taskKpiTarget = 10
-    @State private var taskKpiUnit = ""
+    @State private var taskHasKpiRounds = false
+    @State private var taskKpiRoundsRemaining = 1
+    @State private var taskHasRepeatDelay = false
     @State private var taskToolBundleIDs: [String] = []
     @State private var taskToolsPickerOpen = false
     @State private var taskHasStartDate = false
@@ -177,9 +179,15 @@ struct ItemComposerSheet: View {
     private var taskForm: some View {
         Form {
             if store.jobs.isEmpty {
-                Text("New tasks go to Inbox. Add a job anytime if you want to group work.")
-                    .font(.caption)
-                    .foregroundStyle(TurboTheme.mutedInk)
+                HStack(spacing: 6) {
+                    Text("Inbox")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TurboTheme.mutedInk)
+                    TurboInfoButton(
+                        title: "Inbox placement",
+                        message: "New tasks go to Inbox until you assign them to a job. Add a job anytime if you want to group work."
+                    )
+                }
             } else {
                 Picker("Job", selection: $selectedJobID) {
                     Text("Inbox (no job)").tag(nil as UUID?)
@@ -220,7 +228,7 @@ struct ItemComposerSheet: View {
 
             Toggle("Put on Now", isOn: $taskIsScheduledNow)
 
-            Section("Plan (informative)") {
+            Section {
                 Toggle("Start date", isOn: $taskHasStartDate)
                 if taskHasStartDate {
                     DatePicker("Starts", selection: $taskStartDate, displayedComponents: .date)
@@ -229,9 +237,17 @@ struct ItemComposerSheet: View {
                 if taskHasEndDate {
                     DatePicker("Ends", selection: $taskEndDate, displayedComponents: .date)
                 }
+            } header: {
+                HStack(spacing: 6) {
+                    Text("Plan")
+                    TurboInfoButton(
+                        title: "Plan dates",
+                        message: "These dates are informational. They help you plan and spot overdue work, but they do not control scheduling by themselves."
+                    )
+                }
             }
 
-            if taskCadence != .oneOff {
+            if taskCadence == .repeatable {
                 Stepper(
                     "Reappear after: \(taskRepeatEveryMinutes) min",
                     value: $taskRepeatEveryMinutes,
@@ -241,11 +257,20 @@ struct ItemComposerSheet: View {
             }
 
             if taskCadence == .kpi {
-                Stepper("KPI target: \(taskKpiTarget)", value: $taskKpiTarget, in: 1...500, step: 1)
-                TextField("KPI unit", text: $taskKpiUnit)
+                Section("Counted Task") {
+                    Stepper("Amount: \(taskKpiTarget)", value: $taskKpiTarget, in: 1...500, step: 1)
+                    Toggle("Use rounds", isOn: $taskHasKpiRounds)
+                    if taskHasKpiRounds {
+                        Stepper("Rounds left: \(taskKpiRoundsRemaining)", value: $taskKpiRoundsRemaining, in: 1...50, step: 1)
+                    }
+                    Toggle("Reappear timer", isOn: $taskHasRepeatDelay)
+                    if taskHasRepeatDelay {
+                        Stepper("Reappear after: \(taskRepeatEveryMinutes) min", value: $taskRepeatEveryMinutes, in: 15...2880, step: 15)
+                    }
+                }
             }
 
-            LabeledContent("Tools needed") {
+            LabeledContent {
                 HStack(spacing: 10) {
                     TaskToolsIconRow(bundleIDs: taskToolBundleIDs, iconSize: 22, maxIcons: 6)
                     Spacer(minLength: 0)
@@ -254,6 +279,14 @@ struct ItemComposerSheet: View {
                     }
                     .buttonStyle(.bordered)
                     .trainingWheelsTooltip("Pick Mac apps · in the sheet, focus search and use ↑ ↓ + Return")
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Tools needed")
+                    TurboInfoButton(
+                        title: "Tools needed",
+                        message: "Pick Mac apps for reference. Turbotask stores the app identities so their icons can appear on the task and focus card."
+                    )
                 }
             }
         }
@@ -324,8 +357,7 @@ struct ItemComposerSheet: View {
         case .project:
             selectedJobID != nil && !projectTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .task:
-            !taskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                (taskCadence != .kpi || !taskKpiUnit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            !taskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -374,9 +406,9 @@ struct ItemComposerSheet: View {
                 energy: taskEnergy,
                 cadence: taskCadence,
                 isScheduledNow: taskIsScheduledNow,
-                repeatEveryMinutes: taskCadence == .oneOff ? nil : taskRepeatEveryMinutes,
+                repeatEveryMinutes: taskCadence == .repeatable || (taskCadence == .kpi && taskHasRepeatDelay) ? taskRepeatEveryMinutes : nil,
                 kpiTarget: taskCadence == .kpi ? taskKpiTarget : nil,
-                kpiUnit: taskCadence == .kpi ? taskKpiUnit : nil,
+                kpiRoundsRemaining: taskCadence == .kpi && taskHasKpiRounds ? taskKpiRoundsRemaining : nil,
                 toolBundleIDs: taskToolBundleIDs,
                 jobID: selectedJobID,
                 projectID: selectedProjectID,

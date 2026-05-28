@@ -18,9 +18,13 @@ struct TaskEditorDialog: View {
     @State private var cadence: TaskCadence
     @State private var status: TaskStatus
     @State private var isScheduledNow: Bool
+    @State private var isArchived: Bool
     @State private var repeatEveryMinutes: Int
+    @State private var hasRepeatDelay: Bool
     @State private var kpiTarget: Int
-    @State private var kpiUnit: String
+    @State private var hasKpiRounds: Bool
+    @State private var kpiRoundsRemaining: Int
+    @State private var kpiCount: Int
     @State private var toolBundleIDs: [String]
     @State private var selectedJobID: UUID?
     @State private var selectedProjectID: UUID?
@@ -37,9 +41,13 @@ struct TaskEditorDialog: View {
         _cadence = State(initialValue: context.task.cadence)
         _status = State(initialValue: context.task.status)
         _isScheduledNow = State(initialValue: context.task.isScheduledNow)
+        _isArchived = State(initialValue: context.task.isArchived)
         _repeatEveryMinutes = State(initialValue: context.task.repeatEveryMinutes ?? 60)
+        _hasRepeatDelay = State(initialValue: context.task.repeatEveryMinutes != nil)
         _kpiTarget = State(initialValue: context.task.kpiTarget ?? 10)
-        _kpiUnit = State(initialValue: context.task.kpiUnit ?? "")
+        _hasKpiRounds = State(initialValue: context.task.kpiRoundsRemaining != nil)
+        _kpiRoundsRemaining = State(initialValue: context.task.kpiRoundsRemaining ?? 1)
+        _kpiCount = State(initialValue: context.task.kpiCount)
         _toolBundleIDs = State(initialValue: context.task.toolBundleIDs)
         _selectedJobID = State(initialValue: context.jobID)
         _selectedProjectID = State(initialValue: context.projectID)
@@ -167,9 +175,13 @@ struct TaskEditorDialog: View {
                     .frame(minHeight: 28)
 
                     Toggle("Show in Now", isOn: $isScheduledNow)
+                        .trainingWheelsTooltip("Toggle Now scheduling · ⌥⌘B")
+
+                    Toggle("Archived (hidden from Now and job lists)", isOn: $isArchived)
+                        .trainingWheelsTooltip("Archive hides the task from active lists")
                 }
 
-                Section("Plan (informative)") {
+                Section {
                     Toggle("Start date", isOn: $hasStartDate)
                     if hasStartDate {
                         DatePicker("Starts", selection: $planStart, displayedComponents: .date)
@@ -178,18 +190,34 @@ struct TaskEditorDialog: View {
                     if hasEndDate {
                         DatePicker("Ends", selection: $planEnd, displayedComponents: .date)
                     }
+                } header: {
+                    HStack(spacing: 6) {
+                        Text("Plan")
+                        TurboInfoButton(
+                            title: "Plan dates",
+                            message: "These dates are informational. They help with planning and overdue visibility, but they do not drive the task state."
+                        )
+                    }
                 }
 
-                if cadence != .oneOff {
+                if cadence == .repeatable {
                     Section("Repeat") {
                         Stepper("Reappear After: \(repeatEveryMinutes) min", value: $repeatEveryMinutes, in: 15...2880, step: 15)
                     }
                 }
 
                 if cadence == .kpi {
-                    Section("KPI") {
-                        Stepper("Target: \(kpiTarget)", value: $kpiTarget, in: 1...500, step: 1)
-                        TextField("Unit", text: $kpiUnit)
+                    Section("Counted Task") {
+                        Stepper("Amount: \(kpiTarget)", value: $kpiTarget, in: 1...500, step: 1)
+                        Toggle("Use rounds", isOn: $hasKpiRounds)
+                        if hasKpiRounds {
+                            Stepper("Rounds left: \(kpiRoundsRemaining)", value: $kpiRoundsRemaining, in: 1...50, step: 1)
+                        }
+                        Toggle("Reappear timer", isOn: $hasRepeatDelay)
+                        if hasRepeatDelay {
+                            Stepper("Reappear after: \(repeatEveryMinutes) min", value: $repeatEveryMinutes, in: 15...2880, step: 15)
+                        }
+                        Stepper("Current count: \(kpiCount)", value: $kpiCount, in: 0...10_000, step: 1)
                     }
                 }
             }
@@ -206,6 +234,7 @@ struct TaskEditorDialog: View {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
+                .trainingWheelsTooltip("Discard changes · Esc")
 
                 Spacer()
 
@@ -213,8 +242,9 @@ struct TaskEditorDialog: View {
                     save()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (cadence == .kpi && kpiUnit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut(.defaultAction)
+                .trainingWheelsTooltip("Save task · Return")
             }
             .padding(24)
         }
@@ -234,7 +264,7 @@ struct TaskEditorDialog: View {
         }
 
         let initialStatus = live.task.status
-        let initialIsScheduledNow = live.task.isScheduledNow
+        let initialArchived = live.task.isArchived
         let destinationJobID = selectedJobID
         let destinationProjectID = selectedJobID == nil ? nil : selectedProjectID
 
@@ -259,22 +289,33 @@ struct TaskEditorDialog: View {
                 task.repeatEveryMinutes = nil
                 task.kpiTarget = nil
                 task.kpiUnit = nil
-            } else {
+                task.kpiRoundsRemaining = nil
+                task.kpiCount = 0
+            } else if cadence == .repeatable {
                 task.repeatEveryMinutes = repeatEveryMinutes
-                if cadence == .kpi {
-                    task.kpiTarget = kpiTarget
-                    task.kpiUnit = emptyToNil(kpiUnit)
-                } else {
-                    task.kpiTarget = nil
-                    task.kpiUnit = nil
-                }
+                task.kpiTarget = nil
+                task.kpiUnit = nil
+                task.kpiRoundsRemaining = nil
+                task.kpiCount = 0
+            } else {
+                task.repeatEveryMinutes = hasRepeatDelay ? repeatEveryMinutes : nil
+                task.kpiTarget = kpiTarget
+                task.kpiUnit = nil
+                task.kpiRoundsRemaining = hasKpiRounds ? kpiRoundsRemaining : nil
+                task.kpiCount = max(0, min(kpiCount, kpiTarget))
+                task.progress = min(Double(task.kpiCount) / Double(max(kpiTarget, 1)), 1)
             }
         }
 
         guard ok else { return }
 
+        if let refreshed = store.taskContext(taskID: context.task.id), initialArchived != isArchived {
+            store.setTaskArchived(refreshed, archived: isArchived)
+        }
+
         if let refreshed = store.taskContext(taskID: context.task.id) {
-            if initialIsScheduledNow != isScheduledNow {
+            let wantNow = isScheduledNow && !isArchived
+            if refreshed.task.isScheduledNow != wantNow {
                 store.toggleTaskNow(refreshed)
             }
 
@@ -320,10 +361,5 @@ struct TaskEditorDialog: View {
             self.selectedJobID = nil
             self.selectedProjectID = nil
         }
-    }
-
-    private func emptyToNil(_ text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }
