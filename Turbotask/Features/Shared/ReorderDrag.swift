@@ -43,6 +43,40 @@ struct ReorderHandle: View {
     }
 }
 
+extension View {
+    /// Whole-row drag source for list reordering (no visible grip handle).
+    @ViewBuilder
+    func reorderRowDrag(
+        taskID: UUID,
+        title: String,
+        drag: ReorderDragState,
+        isEnabled: Bool = true
+    ) -> some View {
+        if isEnabled {
+            onDrag {
+                drag.draggedID = taskID
+                return NSItemProvider(object: taskID.uuidString as NSString)
+            } preview: {
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(TurboTheme.ink)
+                    .lineLimit(1)
+                    .frame(maxWidth: 280, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(TurboTheme.cardFill)
+                            .shadow(color: TurboTheme.shadow, radius: 8, y: 4)
+                    )
+            }
+            .accessibilityHint("Drag to reorder")
+        } else {
+            self
+        }
+    }
+}
+
 struct RowReorderDropDelegate: DropDelegate {
     let rowID: UUID
     let drag: ReorderDragState

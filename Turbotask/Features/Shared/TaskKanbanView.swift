@@ -78,6 +78,7 @@ struct TaskKanbanBoard: View {
     @AppStorage("kanban_revealed_optional_statuses") private var revealedStatusesRaw = ""
     @State private var optimisticPlacement: KanbanOptimisticPlacement?
     @State private var dragEndMonitor: Any?
+    @State private var linkingKeyMonitor: Any?
 
     let tasks: [TaskContext]
     let mode: TaskKanbanBoardMode
@@ -135,9 +136,20 @@ struct TaskKanbanBoard: View {
         }
         .onAppear {
             installDragEndMonitor()
+            if store.dependencyLinkingSourceTaskID != nil {
+                installLinkingKeyMonitor()
+            }
         }
         .onDisappear {
             removeDragEndMonitor()
+            removeLinkingKeyMonitor()
+        }
+        .onChange(of: store.dependencyLinkingSourceTaskID) { _, sourceID in
+            if sourceID != nil {
+                installLinkingKeyMonitor()
+            } else {
+                removeLinkingKeyMonitor()
+            }
         }
         .onChange(of: tasks) { _, _ in
             guard let placement = optimisticPlacement,
@@ -146,7 +158,12 @@ struct TaskKanbanBoard: View {
             optimisticPlacement = nil
         }
         .overlay(alignment: .bottom) {
-            if drag.draggedTaskID != nil {
+            if store.dependencyLinkingSourceTaskID != nil {
+                DependencyLinkingHintBar()
+                    .environmentObject(store)
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
+            } else if drag.draggedTaskID != nil {
                 kanbanDragHint
                     .padding(.bottom, 8)
                     .transition(.opacity)
@@ -256,6 +273,25 @@ struct TaskKanbanBoard: View {
         }
     }
 
+    private func installLinkingKeyMonitor() {
+        removeLinkingKeyMonitor()
+        linkingKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard store.dependencyLinkingSourceTaskID != nil else { return event }
+            if event.keyCode == 53 { // Esc
+                store.cancelDependencyLinking()
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeLinkingKeyMonitor() {
+        if let linkingKeyMonitor {
+            NSEvent.removeMonitor(linkingKeyMonitor)
+            self.linkingKeyMonitor = nil
+        }
+    }
+
     private func columnOrder(for status: TaskStatus, movingID: UUID, before targetID: UUID?) -> [UUID] {
         var ids = tasks(in: status).map(\.task.id).filter { $0 != movingID }
         if let targetID, let index = ids.firstIndex(of: targetID) {
@@ -315,7 +351,7 @@ struct TaskKanbanBoard: View {
         let isHoverColumn = drag.hoverColumn == status && drag.hoverHiddenBundle == nil
 
         VStack(alignment: .leading, spacing: 0) {
-            columnHeader(status: status, count: columnTasks.count, canCollapse: canCollapse && columnTasks.isEmpty)
+            columnHeader(status: status, canCollapse: canCollapse && columnTasks.isEmpty)
 
             ScrollView {
                 VStack(spacing: 6) {
@@ -366,6 +402,12 @@ struct TaskKanbanBoard: View {
                 )
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onTapGesture {
+            if store.dependencyLinkingSourceTaskID != nil {
+                store.cancelDependencyLinking()
+            }
+        }
         .onDrop(
             of: [.text],
             delegate: KanbanColumnDropDelegate(
@@ -378,7 +420,7 @@ struct TaskKanbanBoard: View {
         )
     }
 
-    private func columnHeader(status: TaskStatus, count: Int, canCollapse: Bool) -> some View {
+    private func columnHeader(status: TaskStatus, canCollapse: Bool) -> some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(status.accent)
@@ -388,9 +430,6 @@ struct TaskKanbanBoard: View {
                 .foregroundStyle(TurboTheme.ink)
                 .lineLimit(1)
             Spacer(minLength: 2)
-            Text("\(count)")
-                .font(.caption2.weight(.bold).monospacedDigit())
-                .foregroundStyle(TurboTheme.mutedInk)
             if canCollapse {
                 Button {
                     collapseColumn(status)
@@ -525,6 +564,7 @@ struct TaskKanbanBoard: View {
         .accessibilityLabel("Drop to reveal \(status.title) column")
     }
 
+    @ViewBuilder
     private func kanbanCard(context: TaskContext) -> some View {
         let isSelected = store.selection == .task(
             jobID: context.jobID,
@@ -532,37 +572,54 @@ struct TaskKanbanBoard: View {
             taskID: context.task.id
         )
         let isDragging = drag.draggedTaskID == context.task.id
+        let linkingRole = store.linkingRole(for: context.task.id)
+        let isLinking = store.dependencyLinkingSourceTaskID != nil
 
-        return KanbanTaskCard(
+        let card = KanbanTaskCard(
             context: context,
             isSelected: isSelected,
             isDragging: isDragging,
             isLinkHoverTarget: drag.hoverLinkTargetID == context.task.id && drag.isLinkingDrop,
+            linkingRole: linkingRole,
             onEdit: { onEditTask(context) },
             onSelect: {
-                store.select(.task(jobID: context.jobID, projectID: context.projectID, taskID: context.task.id))
+                if isLinking {
+                    if linkingRole == .validTarget {
+                        store.completeDependencyLinking(prerequisiteID: context.task.id)
+                    }
+                } else {
+                    store.select(.task(jobID: context.jobID, projectID: context.projectID, taskID: context.task.id))
+                }
             }
         )
         .environmentObject(store)
+        .dependencyLinkingCard(taskID: context.task.id, accentTint: TaskKanbanLayout.dependencyTint)
         .opacity(isDragging ? 0.55 : 1)
         .scaleEffect(isDragging ? 0.98 : 1, anchor: .center)
-        .onDrag {
-            performInstantKanbanUpdate {
-                optimisticPlacement = nil
-                drag.draggedTaskID = context.task.id
-            }
-            return NSItemProvider(object: context.task.id.uuidString as NSString)
-        } preview: {
-            KanbanTaskCard(
-                context: context,
-                isSelected: false,
-                isDragging: false,
-                onEdit: {},
-                onSelect: {}
-            )
-            .environmentObject(store)
-            .frame(width: TaskKanbanLayout.columnWidth - 16)
-            .shadow(color: TurboTheme.shadow, radius: 10, y: 5)
+        .zIndex(linkingRole == .source ? 2 : (linkingRole == .validTarget ? 1 : 0))
+
+        if isLinking {
+            card
+        } else {
+            card
+                .onDrag {
+                    performInstantKanbanUpdate {
+                        optimisticPlacement = nil
+                        drag.draggedTaskID = context.task.id
+                    }
+                    return NSItemProvider(object: context.task.id.uuidString as NSString)
+                } preview: {
+                    KanbanTaskCard(
+                        context: context,
+                        isSelected: false,
+                        isDragging: false,
+                        onEdit: {},
+                        onSelect: {}
+                    )
+                    .environmentObject(store)
+                    .frame(width: TaskKanbanLayout.columnWidth - 16)
+                    .shadow(color: TurboTheme.shadow, radius: 10, y: 5)
+                }
         }
     }
 }
@@ -576,6 +633,7 @@ private struct KanbanTaskCard: View {
     let isSelected: Bool
     let isDragging: Bool
     var isLinkHoverTarget = false
+    var linkingRole: DependencyLinkingRole = .inactive
     let onEdit: () -> Void
     let onSelect: () -> Void
 
@@ -619,6 +677,9 @@ private struct KanbanTaskCard: View {
     }
 
     private var cardBorderColor: Color {
+        if linkingRole == .validTarget {
+            return TaskKanbanLayout.dependencyTint.opacity(0.75)
+        }
         if isLinkHoverTarget {
             return TaskKanbanLayout.dependencyTint.opacity(0.85)
         }
@@ -630,7 +691,7 @@ private struct KanbanTaskCard: View {
     }
 
     private var cardBorderWidth: CGFloat {
-        if isLinkHoverTarget { return 2 }
+        if linkingRole == .validTarget || isLinkHoverTarget { return 2 }
         if isSelected { return 1.5 }
         return 1
     }
@@ -674,6 +735,13 @@ private struct KanbanTaskCard: View {
                 }
 
                 HStack(spacing: 6) {
+                    if context.isOperationTask {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(context.jobColor)
+                            .help("Operation: \(context.operationTitle)")
+                            .accessibilityLabel("Operation: \(context.operationTitle)")
+                    }
                     Text(metaLine)
                         .font(.system(size: 10))
                         .foregroundStyle(TurboTheme.mutedInk)
@@ -713,7 +781,10 @@ private struct KanbanTaskCard: View {
             }
         }
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onTapGesture(count: 2, perform: onEdit)
+        .onTapGesture(count: 2) {
+            guard linkingRole == .inactive else { return }
+            onEdit()
+        }
         .onTapGesture(perform: onSelect)
         .contextMenu {
             TaskRowContextMenuItems(context: context, onEdit: onEdit)
@@ -721,7 +792,13 @@ private struct KanbanTaskCard: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabelText)
-        .accessibilityHint("Drag to move. Option-drag onto another card to link: that task starts after this one finishes.")
+        .accessibilityHint(linkingRole == .inactive
+            ? "Drag to move. Option-drag onto another card to link: that task starts after this one finishes."
+            : linkingRole == .validTarget
+                ? "Tap to set as prerequisite."
+                : linkingRole == .source
+                    ? "Choose another task that must finish before this one can start."
+                    : "Cannot link to this task.")
     }
 
     private var accessibilityLabelText: String {
