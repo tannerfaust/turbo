@@ -31,7 +31,7 @@ private enum TasksHubLens: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all: "All"
-        case .byJob: "Jobs"
+        case .byJob: "Fields"
         case .byProject: "Projects"
         case .byStatus: "Status"
         }
@@ -73,6 +73,17 @@ struct TasksView: View {
     @State private var tasksKeyMonitor: Any?
     @StateObject private var taskDrag = ReorderDragState()
 
+    private var registryViewMode: TaskViewMode {
+        store.tasksPresentation.viewMode
+    }
+
+    private var registryViewModeBinding: Binding<TaskViewMode> {
+        Binding(
+            get: { store.tasksPresentation.viewMode },
+            set: { store.setTaskViewMode($0) }
+        )
+    }
+
     private var filteredTasks: [TaskContext] {
         store.filteredTaskContexts
     }
@@ -85,9 +96,18 @@ struct TasksView: View {
         VStack(alignment: .leading, spacing: 0) {
             registryHeader
 
-            lensBar
+            presentationBar
                 .padding(.top, 14)
-                .padding(.bottom, 12)
+
+            if registryViewMode != .kanban {
+                lensBar
+                    .padding(.top, 10)
+                    .padding(.bottom, 12)
+            } else {
+                TrainingWheelsHint(text: "Drag anywhere on a card to move it. Drop on the side bundles (Waiting, Paused) to reveal those columns—like Linear.")
+                    .padding(.top, 8)
+                    .padding(.bottom, 10)
+            }
 
             searchAndSortRow
                 .padding(.bottom, 10)
@@ -101,6 +121,13 @@ struct TasksView: View {
                         actionTitle: "New task",
                         action: { store.openComposer(.task) }
                     )
+                } else if registryViewMode == .kanban {
+                    TaskKanbanBoard(
+                        tasks: filteredTasks,
+                        mode: .registry,
+                        onEditTask: { editingTask = $0 }
+                    )
+                    .environmentObject(store)
                 } else {
                     registryScroll
                 }
@@ -124,6 +151,21 @@ struct TasksView: View {
             TaskEditorDialog(context: context)
                 .environmentObject(store)
                 .frame(minWidth: 760, idealWidth: 840, minHeight: 620, idealHeight: 700)
+        }
+    }
+
+    private var presentationBar: some View {
+        HStack(spacing: 10) {
+            Text("Layout")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(TurboTheme.mutedInk)
+            Picker("Layout", selection: registryViewModeBinding) {
+                Text("List").tag(TaskViewMode.table)
+                Text("Kanban").tag(TaskViewMode.kanban)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 220)
+            Spacer(minLength: 0)
         }
     }
 
@@ -183,18 +225,18 @@ struct TasksView: View {
         case .all:
             nil
         case .byJob:
-            "One section per job. “Inbox & unassigned” is tasks with no job. Inside each job, tasks from every project and job-only tasks are listed together."
+            "One section per field. “Inbox & unassigned” is tasks with no field. Inside each field, tasks from every project and field-only tasks are listed together."
         case .byProject:
             "One section per project. “Job · tasks on job” means tasks not inside a project. Other sections use “Job · Project”."
         case .byStatus:
-            "Groups tasks by their current status regardless of job or project."
+            "Groups tasks by their current status regardless of field or project."
         }
     }
 
     private var searchAndSortRow: some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                TextField("Search title, summary, job, project…", text: tasksSearchBinding)
+                TextField("Search title, summary, field, project…", text: tasksSearchBinding)
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
@@ -502,7 +544,7 @@ struct TasksView: View {
     private func jobSectionTitle(jobID: UUID?, from tasks: [TaskContext]) -> String {
         if let jobID,
            let ctx = tasks.first(where: { $0.jobID == jobID }) {
-            return ctx.jobTitle.isEmpty ? "Job" : ctx.jobTitle
+            return ctx.jobTitle.isEmpty ? "Field" : ctx.jobTitle
         }
         return "Inbox & unassigned"
     }
@@ -512,7 +554,7 @@ struct TasksView: View {
             return "—"
         }
         if ctx.projectID == nil {
-            return ctx.jobTitle.isEmpty ? "Job tasks" : "\(ctx.jobTitle) · tasks on job"
+            return ctx.jobTitle.isEmpty ? "Field tasks" : "\(ctx.jobTitle) · tasks on field"
         }
         let p = ctx.projectTitle.isEmpty ? "Project" : ctx.projectTitle
         if ctx.jobTitle.isEmpty {

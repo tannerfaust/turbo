@@ -248,7 +248,7 @@ struct SettingsView: View {
                             .foregroundStyle(TurboTheme.ink)
                         TurboInfoButton(
                             title: "Arrow keys in search lists",
-                            message: "While a search field is focused, up and down move the highlight and Return selects. Works in Tasks, Jobs, Projects, and the app picker."
+                            message: "While a search field is focused, up and down move the highlight and Return selects. Works in Tasks, Fields, Projects, and the app picker."
                         )
                         Spacer()
                         Toggle(
@@ -327,7 +327,7 @@ struct SettingsView: View {
                         shortcutRow("⌘1", "Now")
                         shortcutRow("⌘2", "Projects")
                         shortcutRow("⌘3", "Tasks")
-                        shortcutRow("⌘4", "Jobs")
+                        shortcutRow("⌘4", "Fields")
                         shortcutRow("⌘5", "Metrics")
                         shortcutRow("⌘6", "Battery")
                         shortcutRow("⌘7", "Archive")
@@ -338,7 +338,7 @@ struct SettingsView: View {
                         shortcutRow("⌘T", "New task (composer). If quick add is open on Now, toggles “Now” instead.")
                         shortcutRow("⌘⇧N", "New task on Now (full composer)")
                         shortcutRow("⌘⇧P", "New project")
-                        shortcutRow("⌘⇧J", "New job")
+                        shortcutRow("⌘⇧J", "New field")
                         shortcutRow("⌘N", "Toggle quick add on Now")
                         shortcutRow("⇧⌘A", "Toggle quick add on Now (same as ⌘N)")
                     }
@@ -351,7 +351,7 @@ struct SettingsView: View {
 
                     shortcutSection(
                         "Start, pause, finish (selected task)",
-                        info: "Select a task on Now, Tasks, Projects, or Jobs first."
+                        info: "Select a task on Now, Tasks, Projects, or Fields first."
                     ) {
                         shortcutRow("Return", "On Now only: start the highlighted task (set to active)")
                         shortcutRow("⌘↩", "Start selected task (any screen)")
@@ -376,11 +376,11 @@ struct SettingsView: View {
                     }
 
                     shortcutSection(
-                        "Search lists (Tasks, Jobs, Tools picker)",
+                        "Search lists (Tasks, Fields, Tools picker)",
                         info: "Requires Arrow keys in search lists above. In the Tools sheet, Return adds or removes the highlighted app."
                     ) {
                         shortcutRow("↑ ↓", "Move highlight while search field is focused")
-                        shortcutRow("Return", "Activate highlighted row (select task/job or toggle app in Tools)")
+                        shortcutRow("Return", "Activate highlighted row (select task/field or toggle app in Tools)")
                     }
 
                     shortcutSection("Quick add on Now") {
@@ -393,7 +393,7 @@ struct SettingsView: View {
                         info: "Grab any row by its handle to reorder."
                     ) {
                         shortcutRow("Now", "Drag tasks to reorder the Now list")
-                        shortcutRow("Jobs", "Drag to reorder jobs and tasks in the workbench")
+                        shortcutRow("Fields", "Drag to reorder fields and tasks in the workbench")
                         shortcutRow("Projects", "Drag to reorder projects (manual sort) and inspector tasks")
                     }
                 }
@@ -501,7 +501,7 @@ private struct DayPlannerCard: View {
                         showPreview = true
                         didApply = false
                     }
-                    presetButton("By Job") {
+                    presetButton("By Field") {
                         primarySort = .job
                         primaryDescending = false
                         secondarySort = .priority

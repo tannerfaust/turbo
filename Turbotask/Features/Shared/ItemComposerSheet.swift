@@ -12,6 +12,9 @@ struct ItemComposerSheet: View {
 
     let context: TurboTaskStore.ComposerContext
 
+    @AppStorage("composer_create_more") private var createMore = false
+    @FocusState private var titleFocused: Bool
+
     @State private var jobTitle = ""
     @State private var jobSummary = ""
     @State private var selectedPalette: JobPalette = .forest
@@ -21,402 +24,269 @@ struct ItemComposerSheet: View {
     @State private var projectOutcome = ""
     @State private var projectEmoji = ""
 
-    @State private var selectedProjectID: UUID?
-    @State private var taskTitle = ""
-    @State private var taskStatus: TaskStatus = .queued
-    @State private var taskEnergy: TaskEnergy = .deepFocus
-    @State private var taskCadence: TaskCadence = .oneOff
-    @State private var taskIsScheduledNow = false
-    @State private var taskRepeatEveryMinutes = 60
-    @State private var taskKpiTarget = 10
-    @State private var taskHasKpiRounds = false
-    @State private var taskKpiRoundsRemaining = 1
-    @State private var taskHasRepeatDelay = false
-    @State private var taskToolBundleIDs: [String] = []
-    @State private var taskToolsPickerOpen = false
-    @State private var taskHasStartDate = false
-    @State private var taskHasEndDate = false
-    @State private var taskStartDate = Date()
-    @State private var taskEndDate = Date()
-
     init(context: TurboTaskStore.ComposerContext) {
         self.context = context
         _selectedJobID = State(initialValue: context.preferredJobID)
-        _selectedProjectID = State(initialValue: context.preferredProjectID)
-        _taskIsScheduledNow = State(initialValue: context.scheduleForNow)
     }
 
     var body: some View {
-        ZStack {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                Divider()
-                content
-                Divider()
-                footer
-            }
-
-            taskComposerKeyTraps
-                .allowsHitTesting(false)
-        }
-        .frame(width: 560, height: 560)
-        .background(TurboTheme.backgroundRaised)
-        .onAppear {
-            syncProjectSelection()
-        }
-        .onChange(of: selectedJobID) {
-            syncProjectSelection()
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(TurboTheme.ink)
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(TurboTheme.mutedInk)
-        }
-        .padding(22)
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch context.kind {
-        case .job:
-            jobForm
-        case .project:
-            projectForm
-        case .task:
-            taskForm
-        }
-    }
-
-    /// Local shortcuts while the task composer is open (⌥⌘1…5 status · ⌥⌘B toggle Now).
-    @ViewBuilder
-    private var taskComposerKeyTraps: some View {
-        if context.kind == .task {
-            VStack(spacing: 0) {
-                Button("") { taskStatus = .queued }
-                    .keyboardShortcut("1", modifiers: [.command, .option])
-                Button("") { taskStatus = .active }
-                    .keyboardShortcut("2", modifiers: [.command, .option])
-                Button("") { taskStatus = .waiting }
-                    .keyboardShortcut("3", modifiers: [.command, .option])
-                Button("") { taskStatus = .paused }
-                    .keyboardShortcut("4", modifiers: [.command, .option])
-                Button("") { taskStatus = .done }
-                    .keyboardShortcut("5", modifiers: [.command, .option])
-                Button("") { taskIsScheduledNow.toggle() }
-                    .keyboardShortcut("b", modifiers: [.command, .option])
-            }
-            .frame(width: 0, height: 0)
-            .accessibilityHidden(true)
-        }
-    }
-
-    private var footer: some View {
-        HStack {
-            Button("Cancel") {
-                store.clearComposer()
-            }
-            .keyboardShortcut(.cancelAction)
-            .trainingWheelsTooltip("Dismiss · Esc")
-
-            Spacer()
-
-            Button(primaryButtonTitle) {
-                save()
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canSave)
-            .keyboardShortcut(.defaultAction)
-            .trainingWheelsTooltip("Save · Return")
-        }
-        .padding(22)
-    }
-
-    private var jobForm: some View {
-        Form {
-            TextField("Job title", text: $jobTitle)
-            TextField("What this job is for", text: $jobSummary, axis: .vertical)
-                .lineLimit(3...5)
-            LabeledContent("Accent") {
-                JobPaletteSwatchRow(selection: $selectedPalette)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private var projectForm: some View {
         Group {
-            if store.jobs.isEmpty {
-                prerequisiteMessage(
-                    title: "Create a job first",
-                    detail: "Projects need a parent job before they can exist."
+            switch context.kind {
+            case .task:
+                TaskComposerView(
+                    preferredJobID: context.preferredJobID,
+                    preferredProjectID: context.preferredProjectID,
+                    preferredStatus: context.preferredStatus,
+                    scheduleForNow: context.scheduleForNow
                 )
-            } else {
-                Form {
-                    Picker("Job", selection: $selectedJobID) {
-                        Text("Choose job…").tag(nil as UUID?)
-                        ForEach(store.jobs) { job in
-                            Text(job.title).tag(Optional(job.id))
+            case .job:
+                jobComposer
+            case .project:
+                projectComposer
+            }
+        }
+        .environmentObject(store)
+    }
+
+    // MARK: - Field composer
+
+    private var jobComposer: some View {
+        ComposerChrome(
+            breadcrumb: "New field",
+            onClose: { store.clearComposer() },
+            content: {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        TextField("Field name", text: $jobTitle)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(TurboTheme.ink)
+                            .focused($titleFocused)
+                            .padding(.bottom, 10)
+
+                        TextField("What this field is for…", text: $jobSummary, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 14))
+                            .foregroundStyle(TurboTheme.ink)
+                            .lineLimit(2...5)
+                            .padding(.bottom, 16)
+
+                        FlowLayout(spacing: 8) {
+                            ComposerCapturePill(
+                                icon: "paintpalette",
+                                iconColor: selectedPalette.color,
+                                title: selectedPalette.title,
+                                isActive: selectedPalette != .forest
+                            ) {
+                                ForEach(JobPalette.allCases) { palette in
+                                    Button {
+                                        selectedPalette = palette
+                                    } label: {
+                                        HStack {
+                                            Text(palette.title)
+                                            if selectedPalette == palette {
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                    LabeledContent("Icon") {
-                        EmojiPickButton(emoji: $projectEmoji)
-                    }
-                    TextField("Project title", text: $projectTitle)
-                    TextField("What outcome this project should create", text: $projectOutcome, axis: .vertical)
-                        .lineLimit(3...5)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
+                    .padding(.bottom, 20)
                 }
-                .formStyle(.grouped)
+                .scrollIndicators(.hidden)
+            },
+            footerLeading: { Color.clear.frame(width: 28, height: 28) },
+            createMore: $createMore,
+            createTitle: "Create field",
+            canCreate: !jobTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            onCreate: saveJob
+        )
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                titleFocused = true
             }
         }
     }
 
-    private var taskForm: some View {
-        Form {
-            if store.jobs.isEmpty {
-                HStack(spacing: 6) {
-                    Text("Inbox")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(TurboTheme.mutedInk)
-                    TurboInfoButton(
-                        title: "Inbox placement",
-                        message: "New tasks go to Inbox until you assign them to a job. Add a job anytime if you want to group work."
-                    )
-                }
-            } else {
-                Picker("Job", selection: $selectedJobID) {
-                    Text("Inbox (no job)").tag(nil as UUID?)
-                    ForEach(store.jobs) { job in
-                        Text(job.title).tag(Optional(job.id))
-                    }
-                }
+    // MARK: - Project composer
 
-                if selectedJobID != nil {
-                    Picker("Project", selection: $selectedProjectID) {
-                        Text("None — task on job only").tag(nil as UUID?)
-                        ForEach(availableProjects) { context in
-                            Text(context.project.displayTitle).tag(Optional(context.project.id))
+    @ViewBuilder
+    private var projectComposer: some View {
+        if store.jobs.isEmpty {
+            ComposerChrome(
+                breadcrumb: "New project",
+                onClose: { store.clearComposer() },
+                content: { prerequisiteMessage },
+                footerLeading: { Color.clear.frame(width: 28, height: 28) },
+                createMore: .constant(false),
+                createTitle: "Create project",
+                canCreate: false,
+                onCreate: {}
+            )
+        } else {
+            ComposerChrome(
+                breadcrumb: projectBreadcrumb,
+                onClose: { store.clearComposer() },
+                content: { projectComposerBody },
+                footerLeading: { Color.clear.frame(width: 28, height: 28) },
+                createMore: $createMore,
+                createTitle: "Create project",
+                canCreate: selectedJobID != nil && !projectTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                onCreate: saveProject
+            )
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    titleFocused = true
+                }
+            }
+        }
+    }
+
+    private var projectComposerBody: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                TextField("Project title", text: $projectTitle)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(TurboTheme.ink)
+                    .focused($titleFocused)
+                    .padding(.bottom, 10)
+
+                TextField("What outcome this project should create…", text: $projectOutcome, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14))
+                    .foregroundStyle(TurboTheme.ink)
+                    .lineLimit(2...5)
+                    .padding(.bottom, 16)
+
+                FlowLayout(spacing: 8) {
+                    fieldPickerPill
+                    ComposerCapturePill(
+                        icon: "face.smiling",
+                        title: projectEmoji.isEmpty ? "Icon" : projectEmoji,
+                        isActive: !projectEmoji.isEmpty
+                    ) {
+                        Button("Clear icon") {
+                            projectEmoji = ""
+                        }
+                        Divider()
+                        ForEach(projectEmojiQuickPicks, id: \.self) { emoji in
+                            Button(emoji) {
+                                projectEmoji = emoji
+                            }
                         }
                     }
                 }
             }
-
-            TextField("Task title", text: $taskTitle)
-
-            Picker("Status", selection: $taskStatus) {
-                ForEach(TaskStatus.allCases) { status in
-                    Text(status.title).tag(status)
-                }
-            }
-
-            Picker("Work mode", selection: $taskEnergy) {
-                ForEach(TaskEnergy.allCases) { energy in
-                    Text(energy.title).tag(energy)
-                }
-            }
-
-            Picker("Task pattern", selection: $taskCadence) {
-                ForEach(TaskCadence.allCases) { cadence in
-                    Text(cadence.title).tag(cadence)
-                }
-            }
-
-            Toggle("Put on Now", isOn: $taskIsScheduledNow)
-
-            Section {
-                Toggle("Start date", isOn: $taskHasStartDate)
-                if taskHasStartDate {
-                    DatePicker("Starts", selection: $taskStartDate, displayedComponents: .date)
-                }
-                Toggle("Target end date", isOn: $taskHasEndDate)
-                if taskHasEndDate {
-                    DatePicker("Ends", selection: $taskEndDate, displayedComponents: .date)
-                }
-            } header: {
-                HStack(spacing: 6) {
-                    Text("Plan")
-                    TurboInfoButton(
-                        title: "Plan dates",
-                        message: "These dates are informational. They help you plan and spot overdue work, but they do not control scheduling by themselves."
-                    )
-                }
-            }
-
-            if taskCadence == .repeatable {
-                Stepper(
-                    "Reappear after: \(taskRepeatEveryMinutes) min",
-                    value: $taskRepeatEveryMinutes,
-                    in: 15...2880,
-                    step: 15
-                )
-            }
-
-            if taskCadence == .kpi {
-                Section("Counted Task") {
-                    Stepper("Amount: \(taskKpiTarget)", value: $taskKpiTarget, in: 1...500, step: 1)
-                    Toggle("Use rounds", isOn: $taskHasKpiRounds)
-                    if taskHasKpiRounds {
-                        Stepper("Rounds left: \(taskKpiRoundsRemaining)", value: $taskKpiRoundsRemaining, in: 1...50, step: 1)
-                    }
-                    Toggle("Reappear timer", isOn: $taskHasRepeatDelay)
-                    if taskHasRepeatDelay {
-                        Stepper("Reappear after: \(taskRepeatEveryMinutes) min", value: $taskRepeatEveryMinutes, in: 15...2880, step: 15)
-                    }
-                }
-            }
-
-            LabeledContent {
-                HStack(spacing: 10) {
-                    TaskToolsIconRow(bundleIDs: taskToolBundleIDs, iconSize: 22, maxIcons: 6)
-                    Spacer(minLength: 0)
-                    Button("Choose apps…") {
-                        taskToolsPickerOpen = true
-                    }
-                    .buttonStyle(.bordered)
-                    .trainingWheelsTooltip("Pick Mac apps · in the sheet, focus search and use ↑ ↓ + Return")
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text("Tools needed")
-                    TurboInfoButton(
-                        title: "Tools needed",
-                        message: "Pick Mac apps for reference. Turbotask stores the app identities so their icons can appear on the task and focus card."
-                    )
-                }
-            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 20)
         }
-        .formStyle(.grouped)
-        .sheet(isPresented: $taskToolsPickerOpen) {
-            TaskToolsPickerSheet(bundleIDs: $taskToolBundleIDs)
-                .environmentObject(store)
+        .scrollIndicators(.hidden)
+    }
+
+    private var fieldPickerPill: some View {
+        ComposerCapturePill(
+            icon: "briefcase",
+            title: selectedJobTitle,
+            isActive: selectedJobID != nil
+        ) {
+            ForEach(store.jobs) { job in
+                Button {
+                    selectedJobID = job.id
+                } label: {
+                    HStack {
+                        Text(job.title)
+                        if selectedJobID == job.id { Image(systemName: "checkmark") }
+                    }
+                }
+            }
         }
     }
 
-    private func prerequisiteMessage(title: String, detail: String) -> some View {
+    private var prerequisiteMessage: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title)
+            Text("Create a field first")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(TurboTheme.ink)
-            Text(detail)
+            Text("Projects need a parent field before they can exist.")
                 .font(.body)
                 .foregroundStyle(TurboTheme.mutedInk)
 
-            Button("Create Job") {
+            Button("Create Field") {
                 store.clearComposer()
                 store.openComposer(.job)
             }
             .buttonStyle(.borderedProminent)
-            .trainingWheelsTooltip("Start with a job, then add projects and tasks")
+            .trainingWheelsTooltip("Start with a field, then add projects and tasks")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(28)
     }
 
-    private var title: String {
-        switch context.kind {
-        case .job:
-            "New Job"
-        case .project:
-            "New Project"
-        case .task:
-            "New Task"
+    private var projectBreadcrumb: String {
+        if let selectedJobID,
+           let job = store.jobs.first(where: { $0.id == selectedJobID }) {
+            return "\(job.title) › New project"
+        }
+        return "New project"
+    }
+
+    private var selectedJobTitle: String {
+        guard let selectedJobID,
+              let job = store.jobs.first(where: { $0.id == selectedJobID }) else {
+            return "Field"
+        }
+        return job.title
+    }
+
+    private var projectEmojiQuickPicks: [String] {
+        ["📁", "🎯", "🚀", "💼", "📊", "✨", "🔥", "📝", "🎨", "🛠️"]
+    }
+
+    // MARK: - Save
+
+    private func saveJob() {
+        let trimmed = jobTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        store.addJob(
+            title: trimmed,
+            summary: jobSummary.trimmingCharacters(in: .whitespacesAndNewlines),
+            palette: selectedPalette
+        )
+
+        if createMore {
+            jobTitle = ""
+            jobSummary = ""
+            titleFocused = true
+        } else {
+            store.clearComposer()
         }
     }
 
-    private var subtitle: String {
-        switch context.kind {
-        case .job:
-            "Jobs are major work domains such as a company, client, or personal area."
-        case .project:
-            "Projects are finite initiatives nested inside a job."
-        case .task:
-            "Tasks can live in Inbox, on a job without a project, or inside a project. All can appear on Now."
+    private func saveProject() {
+        guard let selectedJobID else { return }
+        let trimmed = projectTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        store.addProject(
+            title: trimmed,
+            outcome: projectOutcome.trimmingCharacters(in: .whitespacesAndNewlines),
+            iconEmoji: projectEmoji,
+            jobID: selectedJobID
+        )
+
+        if createMore {
+            projectTitle = ""
+            projectOutcome = ""
+            titleFocused = true
+        } else {
+            store.clearComposer()
         }
-    }
-
-    private var primaryButtonTitle: String {
-        switch context.kind {
-        case .job:
-            "Create Job"
-        case .project:
-            "Create Project"
-        case .task:
-            "Create Task"
-        }
-    }
-
-    private var canSave: Bool {
-        switch context.kind {
-        case .job:
-            !jobTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .project:
-            selectedJobID != nil && !projectTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .task:
-            !taskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-    }
-
-    private var availableProjects: [ProjectContext] {
-        guard let selectedJobID else { return [] }
-        return store.projectContexts.filter { $0.jobID == selectedJobID }
-    }
-
-    private func syncProjectSelection() {
-        guard context.kind == .task else { return }
-
-        if selectedJobID == nil {
-            selectedProjectID = nil
-            return
-        }
-
-        if let pid = selectedProjectID,
-           !availableProjects.contains(where: { $0.project.id == pid }) {
-            selectedProjectID = nil
-        }
-    }
-
-    private func save() {
-        switch context.kind {
-        case .job:
-            store.addJob(
-                title: jobTitle.trimmingCharacters(in: .whitespacesAndNewlines),
-                summary: jobSummary.trimmingCharacters(in: .whitespacesAndNewlines),
-                palette: selectedPalette
-            )
-        case .project:
-            guard let selectedJobID else { return }
-            store.addProject(
-                title: projectTitle.trimmingCharacters(in: .whitespacesAndNewlines),
-                outcome: projectOutcome.trimmingCharacters(in: .whitespacesAndNewlines),
-                iconEmoji: projectEmoji,
-                jobID: selectedJobID
-            )
-        case .task:
-            let cal = Calendar.current
-            let start = taskHasStartDate ? cal.startOfDay(for: taskStartDate) : nil
-            let end = taskHasEndDate ? cal.startOfDay(for: taskEndDate) : nil
-            store.addTask(
-                title: taskTitle.trimmingCharacters(in: .whitespacesAndNewlines),
-                status: taskStatus,
-                energy: taskEnergy,
-                cadence: taskCadence,
-                isScheduledNow: taskIsScheduledNow,
-                repeatEveryMinutes: taskCadence == .repeatable || (taskCadence == .kpi && taskHasRepeatDelay) ? taskRepeatEveryMinutes : nil,
-                kpiTarget: taskCadence == .kpi ? taskKpiTarget : nil,
-                kpiRoundsRemaining: taskCadence == .kpi && taskHasKpiRounds ? taskKpiRoundsRemaining : nil,
-                toolBundleIDs: taskToolBundleIDs,
-                jobID: selectedJobID,
-                projectID: selectedProjectID,
-                startDate: start,
-                endDate: end
-            )
-        }
-
-        store.clearComposer()
     }
 }

@@ -89,7 +89,7 @@ struct JobsView: View {
         .padding(.vertical, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(TurboTheme.background)
-        .alert("Delete job?", isPresented: Binding(
+        .alert("Delete field?", isPresented: Binding(
             get: { pendingDeleteJob != nil },
             set: { if !$0 { pendingDeleteJob = nil } }
         )) {
@@ -105,7 +105,7 @@ struct JobsView: View {
             }
             Button("Cancel", role: .cancel) { pendingDeleteJob = nil }
         } message: {
-            Text("Removes the job, its projects, tasks, and related history.")
+            Text("Removes the field, its projects, tasks, and related history.")
         }
         .alert("Delete project?", isPresented: Binding(
             get: { pendingDeleteProject != nil },
@@ -204,33 +204,33 @@ struct JobsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("JOB WORKBENCH")
+                    Text("FIELD WORKBENCH")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(TurboTheme.mutedInk)
                         .tracking(1.15)
-                    Text("Pick a job, choose a scope, work the list")
+                    Text("Pick a field, choose a scope, work the list")
                         .font(.title2.weight(.semibold))
                         .foregroundStyle(TurboTheme.ink)
                 }
                 Spacer(minLength: 12)
-                Button("New job") {
+                Button("New field") {
                     store.openComposer(.job)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(TurboTheme.ink)
                 .keyboardShortcut("j", modifiers: [.command, .shift])
-                .trainingWheelsTooltip("New job · ⌘⇧J")
+                .trainingWheelsTooltip("New field · ⌘⇧J")
             }
 
             HStack(spacing: 10) {
                 IdentifiedTextField(
                     identifier: TypeaheadFieldID.jobsSearch,
                     text: $search,
-                    placeholder: "Filter jobs…"
+                    placeholder: "Filter fields…"
                 )
                 .frame(height: 26)
 
-                Text("\(visibleJobs.count) jobs")
+                Text("\(visibleJobs.count) fields")
                     .font(.caption.weight(.medium).monospacedDigit())
                     .foregroundStyle(TurboTheme.mutedInk)
 
@@ -246,7 +246,7 @@ struct JobsView: View {
                     )
             )
 
-            TrainingWheelsHint(text: "Search focused: ↑ ↓ and Return selects a job in the directory.")
+            TrainingWheelsHint(text: "Search focused: ↑ ↓ and Return selects a field in the directory.")
                 .padding(.top, 2)
         }
         .padding(.bottom, 14)
@@ -283,7 +283,7 @@ struct JobsView: View {
                                     browserJobID = job.id
                                 }
                                 .contextMenu {
-                                    Button("Delete job…") {
+                                    Button("Delete field…") {
                                         pendingDeleteJob = job
                                     }
                                 }
@@ -358,11 +358,27 @@ struct JobsView: View {
                 .frame(width: 5)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(job.title)
+                if browserJobID == job.id {
+                    TextField(
+                        "Field name",
+                        text: Binding(
+                            get: { job.title },
+                            set: { value in
+                                store.updateJob(jobID: job.id) { $0.title = value }
+                            }
+                        )
+                    )
                     .font(.subheadline.weight(.semibold))
+                    .textFieldStyle(.plain)
                     .foregroundStyle(TurboTheme.ink)
                     .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+                } else {
+                    Text(job.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(TurboTheme.ink)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
                 Text("\(job.projects.count) projects · \(openWorkCount(job)) open")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(TurboTheme.mutedInk)
@@ -403,7 +419,7 @@ struct JobsView: View {
 
                 workbenchTasksSection
             } else {
-                Text("Choose a job in the directory.")
+                Text("Choose a field in the directory.")
                     .font(.body)
                     .foregroundStyle(TurboTheme.mutedInk)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -425,18 +441,9 @@ struct JobsView: View {
     private func workbenchJobHeader(job: Job) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                TextField(
-                    "Job title",
-                    text: Binding(
-                        get: { job.title },
-                        set: { v in _Concurrency.Task { @MainActor in store.updateJob(jobID: job.id) { $0.title = v } } }
-                    )
-                )
-                .font(.title3.weight(.semibold))
-                .textFieldStyle(.plain)
-                .foregroundStyle(TurboTheme.ink)
-
-                Spacer(minLength: 8)
+                FieldAppearanceEditor(jobID: job.id, showsSummary: true)
+                    .environmentObject(store)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: 8) {
                     Button("New project") {
@@ -447,7 +454,7 @@ struct JobsView: View {
                     .controlSize(.regular)
                     .tint(job.palette.color)
                     .keyboardShortcut("p", modifiers: [.command, .shift])
-                    .trainingWheelsTooltip("New project on this job · ⌘⇧P")
+                    .trainingWheelsTooltip("New project on this field · ⌘⇧P")
 
                     Button("New task") {
                         store.select(.job(job.id))
@@ -460,19 +467,6 @@ struct JobsView: View {
                     .trainingWheelsTooltip("New task · ⌘T")
                 }
             }
-
-            TextField(
-                "Summary — what this job is for",
-                text: Binding(
-                    get: { job.summary },
-                    set: { v in _Concurrency.Task { @MainActor in store.updateJob(jobID: job.id) { $0.summary = v } } }
-                ),
-                axis: .vertical
-            )
-            .font(.subheadline)
-            .foregroundStyle(TurboTheme.mutedInk)
-            .textFieldStyle(.plain)
-            .lineLimit(2...5)
         }
     }
 
@@ -481,7 +475,7 @@ struct JobsView: View {
             HStack(spacing: 8) {
                 scopeChip(
                     title: "Direct tasks",
-                    subtitle: "On job only",
+                    subtitle: "On field only",
                     count: job.jobTasks.filter { !$0.isArchived && $0.status != .done }.count,
                     selected: scope == .directTasks
                 ) {
@@ -564,7 +558,7 @@ struct JobsView: View {
                 .font(.caption.weight(.semibold))
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .trainingWheelsTooltip("Opens task composer for this scope · ⌘T also works if this job/project is selected")
+                .trainingWheelsTooltip("Opens task composer for this scope · ⌘T also works if this field/project is selected")
             }
             .padding(.bottom, 10)
 
@@ -670,8 +664,8 @@ struct JobsView: View {
 
     private var emptyState: some View {
         TurboEmptyState(
-            title: search.isEmpty ? "No jobs yet." : "No jobs match your filter.",
-            actionTitle: "New job",
+            title: search.isEmpty ? "No fields yet." : "No fields match your filter.",
+            actionTitle: "New field",
             action: { store.openComposer(.job) }
         )
     }

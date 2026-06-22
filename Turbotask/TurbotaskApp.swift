@@ -82,7 +82,7 @@ struct TurbotaskApp: App {
                 }
                 .keyboardShortcut("p", modifiers: [.command, .shift])
 
-                Button("New Job…") {
+                Button("New Field…") {
                     store.openComposer(.job)
                 }
                 .keyboardShortcut("j", modifiers: [.command, .shift])
@@ -104,7 +104,7 @@ struct TurbotaskApp: App {
                 }
                 .keyboardShortcut("3", modifiers: .command)
 
-                Button("Jobs") {
+                Button("Fields") {
                     store.selectedScreen = .jobs
                 }
                 .keyboardShortcut("4", modifiers: .command)
@@ -150,12 +150,12 @@ struct TurbotaskApp: App {
                 }
                 .keyboardShortcut("0", modifiers: [.command, .option])
 
-                Button("Group by Jobs") {
+                Button("Group by Fields") {
                     store.performNowShortcut(.setListGrouping(.jobs))
                 }
                 .keyboardShortcut("j", modifiers: [.command, .option])
 
-                Button("Group by Jobs and Projects") {
+                Button("Group by Fields and Projects") {
                     store.performNowShortcut(.setListGrouping(.jobsAndProjects))
                 }
                 .keyboardShortcut("g", modifiers: [.command, .option])

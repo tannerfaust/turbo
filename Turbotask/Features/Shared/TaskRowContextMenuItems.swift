@@ -54,6 +54,35 @@ struct TaskRowContextMenuItems: View {
                 Label("Change Type", systemImage: "arrow.triangle.swap")
             }
 
+            Menu {
+                let candidates = dependencyFollowUpCandidates
+                if candidates.isEmpty {
+                    Text("No tasks available")
+                } else {
+                    ForEach(candidates) { candidate in
+                        Button {
+                            store.addTaskDependency(prerequisiteID: context.task.id, dependentID: candidate.task.id)
+                        } label: {
+                            Text(candidate.task.title)
+                        }
+                    }
+                }
+            } label: {
+                Label("Unlocks when done…", systemImage: "arrow.turn.down.right")
+            }
+
+            if !context.task.blockedByTaskIDs.isEmpty {
+                Menu("Remove prerequisite…") {
+                    ForEach(context.task.blockedByTaskIDs, id: \.self) { blockerID in
+                        Button {
+                            store.removeTaskDependency(prerequisiteID: blockerID, from: context.task.id)
+                        } label: {
+                            Text(store.taskContext(taskID: blockerID)?.task.title ?? "Task")
+                        }
+                    }
+                }
+            }
+
             if context.task.isArchived {
                 Button {
                     store.selectTask(context)
@@ -78,5 +107,14 @@ struct TaskRowContextMenuItems: View {
                 Label("Delete Task", systemImage: "trash")
             }
         }
+    }
+
+    private var dependencyFollowUpCandidates: [TaskContext] {
+        store.taskContexts.filter { candidate in
+            candidate.task.id != context.task.id
+                && !candidate.task.isArchived
+                && !candidate.task.blockedByTaskIDs.contains(context.task.id)
+        }
+        .sorted { $0.task.title.localizedCaseInsensitiveCompare($1.task.title) == .orderedAscending }
     }
 }

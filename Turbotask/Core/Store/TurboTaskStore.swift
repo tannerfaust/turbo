@@ -54,7 +54,7 @@ final class TurboTaskStore: ObservableObject {
             case .tasks:
                 "Tasks"
             case .jobs:
-                "Jobs"
+                "Fields"
             case .metrics:
                 "Metrics"
             case .battery:
@@ -118,6 +118,7 @@ final class TurboTaskStore: ObservableObject {
         var kind: ComposerKind
         var preferredJobID: UUID?
         var preferredProjectID: UUID?
+        var preferredStatus: TaskStatus?
         var scheduleForNow: Bool
     }
 
@@ -273,19 +274,7 @@ final class TurboTaskStore: ObservableObject {
             schedulePersistenceIfNeeded()
         }
     }
-    @Published var nowPinnedProjectIDs: [UUID] {
-        didSet {
-            derivedStateIsDirty = true
-            schedulePersistenceIfNeeded()
-        }
-    }
     @Published var nowSuppressedJobIDs: [UUID] {
-        didSet {
-            derivedStateIsDirty = true
-            schedulePersistenceIfNeeded()
-        }
-    }
-    @Published var nowSuppressedProjectIDs: [UUID] {
         didSet {
             derivedStateIsDirty = true
             schedulePersistenceIfNeeded()
@@ -362,6 +351,8 @@ final class TurboTaskStore: ObservableObject {
     @Published var multitaskUpgradeOffer: MultitaskUpgradeOffer?
     /// Shown when more than four tasks would be active together (hard limit).
     @Published var parallelActiveLimitMessage: String?
+    /// Shown when a task can't start because prerequisites are still open.
+    @Published var dependencyNoticeMessage: String?
 
     let appUndoManager = UndoManager()
 
@@ -386,7 +377,6 @@ final class TurboTaskStore: ObservableObject {
     private var cachedWaitingTaskCount = 0
     private var cachedPlan = ExecutionPlan.empty
     private var cachedVisibleNowJobIDs: [UUID] = []
-    private var cachedVisibleNowProjectIDs: [UUID] = []
     private var cachedScopedNowTasks: [TaskContext] = []
     private var cachedNowTreeGroups: [[TaskContext]] = []
     /// Cached today metrics — rebuilt with derived state.
@@ -395,6 +385,7 @@ final class TurboTaskStore: ObservableObject {
     private var cachedQualityRatingAverage: Double = 0
     /// When true, `jobs`/`standaloneTasks` didSet won't schedule persistence (callers do it explicitly).
     private var suppressDidSetPersistence = false
+    private var deferKanbanPersist = false
     /// Maximum history events to retain. Oldest non-metric events are pruned beyond this.
     private static let historyEventCap = 10_000
 
@@ -412,9 +403,7 @@ final class TurboTaskStore: ObservableObject {
         archivedTaskPurgeAfterDays: Int = 0,
         themeMode: AppThemeMode = .system,
         nowPinnedJobIDs: [UUID] = [],
-        nowPinnedProjectIDs: [UUID] = [],
         nowSuppressedJobIDs: [UUID] = [],
-        nowSuppressedProjectIDs: [UUID] = [],
         focusCardDensity: FocusCardDensity = .standard,
         newNowTaskPlacement: NewNowTaskPlacement = .bottom,
         focusOverlayPresenceMode: FocusOverlayPresenceMode = .allDesktops,
@@ -437,9 +426,7 @@ final class TurboTaskStore: ObservableObject {
         self.archivedTaskPurgeAfterDays = archivedTaskPurgeAfterDays
         self.themeMode = themeMode
         self.nowPinnedJobIDs = nowPinnedJobIDs
-        self.nowPinnedProjectIDs = nowPinnedProjectIDs
         self.nowSuppressedJobIDs = nowSuppressedJobIDs
-        self.nowSuppressedProjectIDs = nowSuppressedProjectIDs
         self.focusCardDensity = focusCardDensity
         self.newNowTaskPlacement = newNowTaskPlacement
         self.focusOverlayPresenceMode = focusOverlayPresenceMode
@@ -469,9 +456,7 @@ final class TurboTaskStore: ObservableObject {
                 archivedTaskPurgeAfterDays: snapshot.archivedTaskPurgeAfterDays,
                 themeMode: snapshot.themeMode,
                 nowPinnedJobIDs: snapshot.nowPinnedJobIDs,
-                nowPinnedProjectIDs: snapshot.nowPinnedProjectIDs,
                 nowSuppressedJobIDs: snapshot.nowSuppressedJobIDs,
-                nowSuppressedProjectIDs: snapshot.nowSuppressedProjectIDs,
                 focusCardDensity: snapshot.focusCardDensity,
                 newNowTaskPlacement: snapshot.newNowTaskPlacement,
                 focusOverlayPresenceMode: snapshot.focusOverlayPresenceMode,
@@ -507,9 +492,7 @@ final class TurboTaskStore: ObservableObject {
             tasksPresentation: tasksPresentation,
             themeMode: themeMode,
             nowPinnedJobIDs: nowPinnedJobIDs,
-            nowPinnedProjectIDs: nowPinnedProjectIDs,
             nowSuppressedJobIDs: nowSuppressedJobIDs,
-            nowSuppressedProjectIDs: nowSuppressedProjectIDs,
             focusCardDensity: focusCardDensity,
             newNowTaskPlacement: newNowTaskPlacement,
             focusOverlayPresenceMode: focusOverlayPresenceMode,
@@ -903,7 +886,11 @@ final class TurboTaskStore: ObservableObject {
         return nil
     }
 
-    func openComposer(_ kind: ComposerKind, scheduleForNow: Bool = false) {
+    func openComposer(
+        _ kind: ComposerKind,
+        scheduleForNow: Bool = false,
+        preferredStatus: TaskStatus? = nil
+    ) {
         let (preferredJobID, preferredProjectID): (UUID?, UUID?) = {
             switch kind {
             case .task:
@@ -924,10 +911,11 @@ final class TurboTaskStore: ObservableObject {
 
         presentComposer(
             ComposerContext(
-            kind: kind,
-            preferredJobID: preferredJobID,
-            preferredProjectID: preferredProjectID,
-            scheduleForNow: scheduleForNow
+                kind: kind,
+                preferredJobID: preferredJobID,
+                preferredProjectID: preferredProjectID,
+                preferredStatus: preferredStatus,
+                scheduleForNow: scheduleForNow
             )
         )
     }
@@ -1003,10 +991,10 @@ final class TurboTaskStore: ObservableObject {
                         self.registerUndoAddJob(jobID: job.id)
                     }
                 }
-                self.appUndoManager.setActionName("Add Job")
+                self.appUndoManager.setActionName("Add Field")
             }
         }
-        appUndoManager.setActionName("Add Job")
+        appUndoManager.setActionName("Add Field")
     }
 
     func addProject(title: String, outcome: String, iconEmoji: String, jobID: UUID) {
@@ -1035,6 +1023,7 @@ final class TurboTaskStore: ObservableObject {
                 kind: .project,
                 preferredJobID: preferredJobID,
                 preferredProjectID: nil,
+                preferredStatus: nil,
                 scheduleForNow: false
             )
         )
@@ -1042,6 +1031,7 @@ final class TurboTaskStore: ObservableObject {
 
     func addTask(
         title: String,
+        summary: String = "",
         status: TaskStatus,
         energy: TaskEnergy,
         cadence: TaskCadence,
@@ -1057,7 +1047,7 @@ final class TurboTaskStore: ObservableObject {
     ) {
         let task = Task(
             title: title,
-            summary: "",
+            summary: summary,
             why: "",
             energy: energy,
             cadence: cadence,
@@ -1288,6 +1278,7 @@ final class TurboTaskStore: ObservableObject {
         }
 
         scrubHistoryPreservingMetrics(removingTaskID: tid)
+        scrubDependencyReferences(removingTaskID: tid)
         if payload.restoreSelection {
             selection = nil
             ensureSelection()
@@ -1379,7 +1370,7 @@ final class TurboTaskStore: ObservableObject {
                 self.registerUndoJobReorder(savedJobs: redo)
             }
         }
-        appUndoManager.setActionName("Move Job")
+        appUndoManager.setActionName("Move Field")
     }
 
     func moveProjects(jobID: UUID, fromOffsets source: IndexSet, toOffset destination: Int) {
@@ -1607,7 +1598,7 @@ final class TurboTaskStore: ObservableObject {
                 self.registerRedoDeleteJob(jobID: job.id)
             }
         }
-        appUndoManager.setActionName("Delete Job")
+        appUndoManager.setActionName("Delete Field")
     }
 
     private func registerRedoDeleteJob(jobID: UUID) {
@@ -1627,7 +1618,7 @@ final class TurboTaskStore: ObservableObject {
             }
         }
         _ = (job, removedHistory, savedSelection) // retain for redo chain via deleteJob
-        appUndoManager.setActionName("Restore Job")
+        appUndoManager.setActionName("Restore Field")
     }
 
     func deleteProject(jobID: UUID, projectID: UUID) {
@@ -1641,14 +1632,11 @@ final class TurboTaskStore: ObservableObject {
         }
         let savedSelection = selection
         let projectIndex = location.projectIndex
-        let wasPinned = nowPinnedProjectIDs.contains(projectID)
 
         history.removeAll { event in
             guard let tid = event.taskID else { return false }
             return taskIDs.contains(tid)
         }
-
-        nowPinnedProjectIDs.removeAll { $0 == projectID }
 
         jobs[location.jobIndex].projects.remove(at: location.projectIndex)
 
@@ -1672,13 +1660,13 @@ final class TurboTaskStore: ObservableObject {
         persist()
         registerUndoDeleteProject(
             project: project, jobID: jobID, projectIndex: projectIndex,
-            removedHistory: removedHistory, savedSelection: savedSelection, wasPinned: wasPinned
+            removedHistory: removedHistory, savedSelection: savedSelection
         )
     }
 
     private func registerUndoDeleteProject(
         project: Project, jobID: UUID, projectIndex: Int,
-        removedHistory: [ActivityEvent], savedSelection: Selection?, wasPinned: Bool
+        removedHistory: [ActivityEvent], savedSelection: Selection?
     ) {
 
         appUndoManager.registerUndo(withTarget: self) { [weak self] _ in
@@ -1689,9 +1677,6 @@ final class TurboTaskStore: ObservableObject {
                 self.jobs[jobIdx].projects.insert(project, at: insertAt)
                 self.history.append(contentsOf: removedHistory)
                 self.history.sort { $0.timestamp > $1.timestamp }
-                if wasPinned, !self.nowPinnedProjectIDs.contains(project.id) {
-                    self.nowPinnedProjectIDs.append(project.id)
-                }
                 if let savedSelection { self.selection = savedSelection }
                 self.derivedStateIsDirty = true
                 self.persist()
@@ -1708,15 +1693,20 @@ final class TurboTaskStore: ObservableObject {
         appUndoManager.setActionName("Delete Project")
     }
 
-    func setTaskStatus(_ context: TaskContext, status: TaskStatus, bypassMultitaskUpgradePrompt: Bool = false) {
+    @discardableResult
+    func setTaskStatus(_ context: TaskContext, status: TaskStatus, bypassMultitaskUpgradePrompt: Bool = false) -> Bool {
         if status == .active, !bypassMultitaskUpgradePrompt, context.task.status != .active {
+            if let blockers = pendingBlockerSummary(for: context.task), !blockers.isEmpty {
+                dependencyNoticeMessage = "Complete \(blockers) before starting \(context.task.title)."
+                return false
+            }
             if let note = parallelActiveLimitNote(forActivating: context) {
                 parallelActiveLimitMessage = note
-                return
+                return false
             }
             if let offer = makeMultitaskUpgradeOffer(forActivating: context) {
                 multitaskUpgradeOffer = offer
-                return
+                return false
             }
         }
 
@@ -1820,12 +1810,18 @@ final class TurboTaskStore: ObservableObject {
         if status == .active {
             moveNowTaskToTop(taskID: base.task.id)
         }
-        persist()
+        if completesFinally {
+            activateUnblockedDependents(of: base.task.id)
+        }
+        if !deferKanbanPersist {
+            persist()
+        }
         registerUndoTaskMutation(
             taskSnapshotsBefore: taskSnapshotsBeforeStatus,
             nowOrdersBefore: nowOrdersBeforeStatus,
             actionName: undoActionName(for: status)
         )
+        return true
     }
 
     func cancelMultitaskUpgradeOffer() {
@@ -1834,6 +1830,10 @@ final class TurboTaskStore: ObservableObject {
 
     func clearParallelActiveLimitMessage() {
         parallelActiveLimitMessage = nil
+    }
+
+    func clearDependencyNoticeMessage() {
+        dependencyNoticeMessage = nil
     }
 
     /// Sets all offered tasks to `targetEnergy`, then activates the incoming task without prompting again.
@@ -2011,6 +2011,118 @@ final class TurboTaskStore: ObservableObject {
         registerUndoRestoringNowOrders(ordersBefore)
     }
 
+    /// Reorders a scoped Now task within its status column (Kanban).
+    @discardableResult
+    func reorderNowKanbanTask(movingTaskID: UUID, before targetTaskID: UUID) -> Bool {
+        guard movingTaskID != targetTaskID,
+              let target = scopedNowTasks.first(where: { $0.task.id == targetTaskID }) else { return false }
+
+        let status = target.task.status
+        deferKanbanPersist = true
+        defer {
+            deferKanbanPersist = false
+            persist()
+        }
+
+        if let moving = taskContext(taskID: movingTaskID),
+           moving.task.status != status {
+            guard setTaskStatus(moving, status: status) else { return false }
+        }
+
+        ensureDerivedState()
+        let ordersBefore = captureNowOrdersForUndo()
+        var column = scopedNowTasks
+            .filter { $0.task.status == status }
+            .sorted { $0.task.nowOrder < $1.task.nowOrder }
+
+        guard let sourceIndex = column.firstIndex(where: { $0.task.id == movingTaskID }),
+              let destinationIndex = column.firstIndex(where: { $0.task.id == targetTaskID }) else {
+            return false
+        }
+
+        let moving = column.remove(at: sourceIndex)
+        let insertionIndex = sourceIndex < destinationIndex ? destinationIndex - 1 : destinationIndex
+        column.insert(moving, at: insertionIndex)
+
+        applyKanbanColumnNowOrders(column)
+        registerUndoRestoringNowOrders(ordersBefore)
+        appUndoManager.setActionName("Reorder Task")
+        return true
+    }
+
+    /// Moves a scoped Now task to the end of a status column (Kanban).
+    @discardableResult
+    func moveNowKanbanTaskToColumnEnd(movingTaskID: UUID, status: TaskStatus) -> Bool {
+        deferKanbanPersist = true
+        defer {
+            deferKanbanPersist = false
+            persist()
+        }
+
+        if let moving = taskContext(taskID: movingTaskID),
+           moving.task.status != status {
+            guard setTaskStatus(moving, status: status) else { return false }
+        }
+
+        ensureDerivedState()
+        let ordersBefore = captureNowOrdersForUndo()
+        var column = scopedNowTasks
+            .filter { $0.task.status == status }
+            .sorted { $0.task.nowOrder < $1.task.nowOrder }
+        column.removeAll { $0.task.id == movingTaskID }
+        if let ctx = scopedNowTasks.first(where: { $0.task.id == movingTaskID }) {
+            column.append(ctx)
+        } else if let ctx = taskContext(taskID: movingTaskID), ctx.task.status == status {
+            column.append(ctx)
+        } else {
+            return false
+        }
+
+        applyKanbanColumnNowOrders(column)
+        registerUndoRestoringNowOrders(ordersBefore)
+        appUndoManager.setActionName("Move Task")
+        return true
+    }
+
+    /// Reorders registry tasks in Kanban when they share the same field/project container.
+    @discardableResult
+    func reorderRegistryKanbanTask(movingTaskID: UUID, before targetTaskID: UUID) -> Bool {
+        guard movingTaskID != targetTaskID,
+              let moving = taskContexts.first(where: { $0.task.id == movingTaskID }),
+              let target = taskContexts.first(where: { $0.task.id == targetTaskID }),
+              moving.jobID == target.jobID,
+              moving.projectID == target.projectID,
+              let jobID = target.jobID else { return false }
+
+        if moving.task.status != target.task.status {
+            guard setTaskStatus(moving, status: target.task.status) else { return false }
+        }
+
+        if let projectID = target.projectID {
+            reorderProjectTask(jobID, projectID: projectID, movingTaskID: movingTaskID, before: targetTaskID)
+        } else {
+            reorderJobTask(jobID, movingTaskID: movingTaskID, before: targetTaskID)
+        }
+        return true
+    }
+
+    /// Updates status when a registry task is dropped on a Kanban column.
+    @discardableResult
+    func moveRegistryKanbanTaskToColumn(movingTaskID: UUID, status: TaskStatus) -> Bool {
+        guard let moving = taskContexts.first(where: { $0.task.id == movingTaskID }),
+              moving.task.status != status else { return true }
+        return setTaskStatus(moving, status: status)
+    }
+
+    private func applyKanbanColumnNowOrders(_ columnTasks: [TaskContext]) {
+        guard let minOrder = columnTasks.map(\.task.nowOrder).min() else { return }
+        for (index, context) in columnTasks.enumerated() {
+            updateTask(taskID: context.task.id) { task in
+                task.nowOrder = minOrder + Double(index)
+            }
+        }
+    }
+
     private func captureNowOrdersForUndo() -> [UUID: Double] {
         Dictionary(uniqueKeysWithValues: nowTasks.map { ($0.task.id, $0.task.nowOrder) })
     }
@@ -2036,6 +2148,138 @@ final class TurboTaskStore: ObservableObject {
         appUndoManager.setActionName("Change Type")
     }
 
+    // MARK: - Task dependencies
+
+    func pendingBlockers(for task: Task) -> [TaskContext] {
+        task.blockedByTaskIDs.compactMap { taskContext(taskID: $0) }
+            .filter { $0.task.status != .done && !$0.task.isArchived }
+    }
+
+    func pendingBlockerSummary(for task: Task) -> String? {
+        let titles = pendingBlockers(for: task).map(\.task.title)
+        guard !titles.isEmpty else { return nil }
+        if titles.count == 1 { return "“\(titles[0])”" }
+        if titles.count == 2 { return "“\(titles[0])” and “\(titles[1])”" }
+        return "“\(titles[0])”, “\(titles[1])”, and \(titles.count - 2) more"
+    }
+
+    func isTaskBlocked(_ context: TaskContext) -> Bool {
+        !pendingBlockers(for: context.task).isEmpty
+    }
+
+    func dependents(of taskID: UUID) -> [TaskContext] {
+        taskContexts.filter { $0.task.blockedByTaskIDs.contains(taskID) && !$0.task.isArchived }
+    }
+
+    func openDependents(of taskID: UUID) -> [TaskContext] {
+        dependents(of: taskID).filter { $0.task.status != .done }
+    }
+
+    @discardableResult
+    func addTaskDependency(prerequisiteID: UUID, dependentID: UUID) -> Bool {
+        guard prerequisiteID != dependentID,
+              let prerequisite = taskContext(taskID: prerequisiteID),
+              let dependent = taskContext(taskID: dependentID) else { return false }
+
+        if wouldCreateDependencyCycle(prerequisiteID: prerequisiteID, dependentID: dependentID) {
+            dependencyNoticeMessage = "That link would create a circular dependency."
+            return false
+        }
+
+        let snapshotBefore = dependent.task
+        let nowOrdersBefore = captureNowOrdersForUndo()
+        updateTask(taskID: dependentID) { task in
+            var blockers = task.blockedByTaskIDs
+            guard !blockers.contains(prerequisiteID) else { return }
+            blockers.append(prerequisiteID)
+            task.blockedByTaskIDs = Task.normalizedBlockedByTaskIDs(blockers, for: task.id)
+        }
+
+        if let refreshed = taskContext(taskID: dependentID) {
+            reconcileDependentStatusAfterLinking(prerequisite: prerequisite, dependent: refreshed)
+        }
+
+        persist()
+        if let refreshed = taskContext(taskID: dependentID) {
+            registerUndoTaskMutation(
+                taskSnapshotsBefore: [dependentID: snapshotBefore],
+                nowOrdersBefore: nowOrdersBefore,
+                actionName: "Link Dependency"
+            )
+            _ = refreshed
+        }
+        return true
+    }
+
+    @discardableResult
+    func removeTaskDependency(prerequisiteID: UUID, from dependentID: UUID) -> Bool {
+        guard let dependent = taskContext(taskID: dependentID),
+              dependent.task.blockedByTaskIDs.contains(prerequisiteID) else { return false }
+
+        let snapshotBefore = dependent.task
+        let nowOrdersBefore = captureNowOrdersForUndo()
+        updateTask(taskID: dependentID) { task in
+            task.blockedByTaskIDs.removeAll { $0 == prerequisiteID }
+        }
+        persist()
+        registerUndoTaskMutation(
+            taskSnapshotsBefore: [dependentID: snapshotBefore],
+            nowOrdersBefore: nowOrdersBefore,
+            actionName: "Unlink Dependency"
+        )
+        return true
+    }
+
+    /// Kanban: drop prerequisite onto follow-up while holding Option.
+    @discardableResult
+    func linkKanbanDependency(prerequisiteTaskID: UUID, followUpTaskID: UUID) -> Bool {
+        addTaskDependency(prerequisiteID: prerequisiteTaskID, dependentID: followUpTaskID)
+    }
+
+    private func reconcileDependentStatusAfterLinking(prerequisite: TaskContext, dependent: TaskContext) {
+        guard isTaskBlocked(dependent) else { return }
+        guard dependent.task.status == .active else { return }
+        _ = setTaskStatus(dependent, status: .queued, bypassMultitaskUpgradePrompt: true)
+    }
+
+    private func activateUnblockedDependents(of completedTaskID: UUID) {
+        let candidates = openDependents(of: completedTaskID)
+        guard !candidates.isEmpty else { return }
+
+        for dependent in candidates where pendingBlockers(for: dependent.task).isEmpty {
+            guard dependent.task.status == .queued || dependent.task.status == .waiting else { continue }
+            _ = setTaskStatus(dependent, status: .active, bypassMultitaskUpgradePrompt: false)
+        }
+    }
+
+    private func wouldCreateDependencyCycle(prerequisiteID: UUID, dependentID: UUID) -> Bool {
+        dependsOn(taskID: prerequisiteID, requiredAncestor: dependentID)
+    }
+
+    /// Returns true when `taskID` transitively waits on `requiredAncestor`.
+    private func dependsOn(taskID: UUID, requiredAncestor: UUID) -> Bool {
+        var visited = Set<UUID>()
+        var stack = [taskID]
+        while let current = stack.popLast() {
+            guard visited.insert(current).inserted else { continue }
+            guard let ctx = taskContext(taskID: current) else { continue }
+            for blockerID in ctx.task.blockedByTaskIDs {
+                if blockerID == requiredAncestor { return true }
+                stack.append(blockerID)
+            }
+        }
+        return false
+    }
+
+    private func scrubDependencyReferences(removingTaskID: UUID) {
+        for context in taskContexts where context.task.blockedByTaskIDs.contains(removingTaskID) {
+            updateTask(taskID: context.task.id) { task in
+                task.blockedByTaskIDs.removeAll { $0 == removingTaskID }
+            }
+        }
+        derivedStateIsDirty = true
+    }
+
     // MARK: - Day Planner (semi-automatic arrangement)
 
     enum DayPlannerSortKey: String, CaseIterable, Identifiable {
@@ -2050,7 +2294,7 @@ final class TurboTaskStore: ObservableObject {
         var title: String {
             switch self {
             case .energy: "Energy Type"
-            case .job: "Job"
+            case .job: "Field"
             case .priority: "Priority"
             case .status: "Status"
             case .cadence: "Cadence"
@@ -2482,16 +2726,6 @@ final class TurboTaskStore: ObservableObject {
         return cachedVisibleNowJobIDs.compactMap { id in cachedJobsByID[id] }
     }
 
-    var visibleNowProjectIDs: [UUID] {
-        ensureDerivedState()
-        return cachedVisibleNowProjectIDs
-    }
-
-    var visibleNowProjects: [ProjectContext] {
-        ensureDerivedState()
-        return cachedVisibleNowProjectIDs.compactMap { id in cachedProjectsByID[id] }
-    }
-
     var scopedNowTasks: [TaskContext] {
         ensureDerivedState()
         return cachedScopedNowTasks
@@ -2528,21 +2762,6 @@ final class TurboTaskStore: ObservableObject {
         nowPinnedJobIDs.removeAll { $0 == jobID }
         if !nowSuppressedJobIDs.contains(jobID) {
             nowSuppressedJobIDs.append(jobID)
-        }
-        persist()
-    }
-
-    func pinNowProject(_ projectID: UUID) {
-        nowSuppressedProjectIDs.removeAll { $0 == projectID }
-        guard !nowPinnedProjectIDs.contains(projectID) else { return }
-        nowPinnedProjectIDs.append(projectID)
-        persist()
-    }
-
-    func removeProjectFromNowScope(_ projectID: UUID) {
-        nowPinnedProjectIDs.removeAll { $0 == projectID }
-        if !nowSuppressedProjectIDs.contains(projectID) {
-            nowSuppressedProjectIDs.append(projectID)
         }
         persist()
     }
@@ -2927,18 +3146,9 @@ final class TurboTaskStore: ObservableObject {
         let suppressed = Set(nowSuppressedJobIDs)
         cachedVisibleNowJobIDs = mergedJobIDs.filter { !suppressed.contains($0) }
 
-        let mergedProjectIDs = buildMergedNowProjectIDs(
-            visibleJobIDs: Set(cachedVisibleNowJobIDs)
-        )
-        let suppressedProjects = Set(nowSuppressedProjectIDs)
-        cachedVisibleNowProjectIDs = mergedProjectIDs.filter { !suppressedProjects.contains($0) }
-
         let jobIDSet = Set(cachedVisibleNowJobIDs)
-        let projectIDSet = Set(cachedVisibleNowProjectIDs)
         cachedScopedNowTasks = cachedNowTasks.filter { context in
-            let matchesJob = jobIDSet.isEmpty || (context.jobID.map { jobIDSet.contains($0) } ?? true)
-            let matchesProject = projectIDSet.isEmpty || (context.projectID.map { projectIDSet.contains($0) } ?? true)
-            return matchesJob && matchesProject
+            jobIDSet.isEmpty || (context.jobID.map { jobIDSet.contains($0) } ?? true)
         }
         cachedNowTreeGroups = makeCompatibleNowGroups(from: cachedScopedNowTasks.filter { $0.task.status != .done })
 
@@ -2964,21 +3174,6 @@ final class TurboTaskStore: ObservableObject {
             .compactMap(\.jobID)
         let manual = nowPinnedJobIDs.filter { id in
             cachedJobsByID[id] != nil
-        }
-        return orderedUnion(primary: automatic, secondary: manual)
-    }
-
-    private func buildMergedNowProjectIDs(visibleJobIDs: Set<UUID>) -> [UUID] {
-        let automatic = cachedProjectContexts
-            .filter { context in
-                guard visibleJobIDs.contains(context.jobID) else { return false }
-                let scopeKey = TaskScopeKey(jobID: context.jobID, projectID: context.project.id)
-                let tasks = cachedTaskContextsByScope[scopeKey] ?? []
-                return tasks.contains { $0.task.isScheduledNow && $0.task.isAvailableNow && !$0.task.isArchived }
-            }
-            .map(\.project.id)
-        let manual = nowPinnedProjectIDs.filter { id in
-            cachedProjectsByID[id] != nil
         }
         return orderedUnion(primary: automatic, secondary: manual)
     }
@@ -3195,7 +3390,6 @@ final class TurboTaskStore: ObservableObject {
 
     private var persistedSnapshot: WorkspaceSnapshot {
         let validJobIDs = Set(jobs.map(\.id))
-        let validProjectIDs = Set(jobs.flatMap(\.projects).map(\.id))
 
         return WorkspaceSnapshot(
             jobs: jobs,
@@ -3212,9 +3406,7 @@ final class TurboTaskStore: ObservableObject {
             tasksPresentation: tasksPresentation,
             themeMode: themeMode,
             nowPinnedJobIDs: nowPinnedJobIDs.filter { validJobIDs.contains($0) },
-            nowPinnedProjectIDs: nowPinnedProjectIDs.filter { validProjectIDs.contains($0) },
             nowSuppressedJobIDs: nowSuppressedJobIDs.filter { validJobIDs.contains($0) },
-            nowSuppressedProjectIDs: nowSuppressedProjectIDs.filter { validProjectIDs.contains($0) },
             focusCardDensity: focusCardDensity,
             newNowTaskPlacement: newNowTaskPlacement,
             focusOverlayPresenceMode: focusOverlayPresenceMode,
@@ -3240,9 +3432,7 @@ final class TurboTaskStore: ObservableObject {
             archivedTaskPurgeAfterDays: snapshot.archivedTaskPurgeAfterDays,
             themeMode: snapshot.themeMode,
             nowPinnedJobIDs: snapshot.nowPinnedJobIDs,
-            nowPinnedProjectIDs: snapshot.nowPinnedProjectIDs,
             nowSuppressedJobIDs: snapshot.nowSuppressedJobIDs,
-            nowSuppressedProjectIDs: snapshot.nowSuppressedProjectIDs,
             focusCardDensity: snapshot.focusCardDensity,
             newNowTaskPlacement: snapshot.newNowTaskPlacement,
             focusOverlayPresenceMode: snapshot.focusOverlayPresenceMode,

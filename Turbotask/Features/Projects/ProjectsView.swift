@@ -179,7 +179,7 @@ struct ProjectsView: View {
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(TurboTheme.mutedInk)
                     .tracking(1.05)
-                Text("Projects by job")
+                Text("Projects by field")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(TurboTheme.ink)
             }
@@ -215,7 +215,7 @@ struct ProjectsView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(TurboTheme.ink)
-                    .trainingWheelsTooltip("New project on the selected job · ⌘⇧P")
+                    .trainingWheelsTooltip("New project on the selected field · ⌘⇧P")
                 }
             }
 
@@ -227,11 +227,18 @@ struct ProjectsView: View {
 
     private var jobsRail: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Jobs")
+            Text("Fields")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(TurboTheme.mutedInk)
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
+
+            if let jid = focusedJobID {
+                FieldAppearanceEditor(jobID: jid, titleFont: .subheadline.weight(.semibold))
+                    .environmentObject(store)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+            }
 
             List {
                 ForEach(store.jobs) { job in
@@ -264,14 +271,14 @@ struct ProjectsView: View {
         VStack(alignment: .leading, spacing: 0) {
             if store.jobs.isEmpty {
                 TurboEmptyState(
-                    title: "Create a job first.",
-                    actionTitle: "New job",
+                    title: "Create a field first.",
+                    actionTitle: "New field",
                     action: { store.openComposer(.job) }
                 )
             } else if focusedJobID == nil {
-                contentPlaceholder("Pick a job on the left.")
+                contentPlaceholder("Pick a field on the left.")
             } else if projectsInJob.isEmpty {
-                contentPlaceholder("No projects in this job yet.")
+                contentPlaceholder("No projects in this field yet.")
             } else {
                 ScrollViewReader { proxy in
                     Group {

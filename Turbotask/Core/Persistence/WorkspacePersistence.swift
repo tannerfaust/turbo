@@ -43,11 +43,8 @@ struct WorkspaceSnapshot: Codable {
     var tasksPresentation: TasksPresentationState
     var themeMode: AppThemeMode
     var nowPinnedJobIDs: [UUID]
-    var nowPinnedProjectIDs: [UUID]
     /// Jobs the user removed from the Today scope bar (stays hidden while tasks remain on Now).
     var nowSuppressedJobIDs: [UUID]
-    /// Projects the user removed from the Today scope bar.
-    var nowSuppressedProjectIDs: [UUID]
     var focusCardDensity: FocusCardDensity
     var newNowTaskPlacement: NewNowTaskPlacement
     /// Spaces behavior for the floating focus card (`canJoinAllSpaces` vs current desktop only).
@@ -72,9 +69,7 @@ struct WorkspaceSnapshot: Codable {
         tasksPresentation: TasksPresentationState = TasksPresentationState(),
         themeMode: AppThemeMode = .system,
         nowPinnedJobIDs: [UUID] = [],
-        nowPinnedProjectIDs: [UUID] = [],
         nowSuppressedJobIDs: [UUID] = [],
-        nowSuppressedProjectIDs: [UUID] = [],
         focusCardDensity: FocusCardDensity = .standard,
         newNowTaskPlacement: NewNowTaskPlacement = .bottom,
         focusOverlayPresenceMode: FocusOverlayPresenceMode = .allDesktops,
@@ -96,9 +91,7 @@ struct WorkspaceSnapshot: Codable {
         self.tasksPresentation = tasksPresentation
         self.themeMode = themeMode
         self.nowPinnedJobIDs = nowPinnedJobIDs
-        self.nowPinnedProjectIDs = nowPinnedProjectIDs
         self.nowSuppressedJobIDs = nowSuppressedJobIDs
-        self.nowSuppressedProjectIDs = nowSuppressedProjectIDs
         self.focusCardDensity = focusCardDensity
         self.newNowTaskPlacement = newNowTaskPlacement
         self.focusOverlayPresenceMode = focusOverlayPresenceMode
@@ -152,9 +145,9 @@ struct WorkspaceSnapshot: Codable {
             ?? TasksPresentationState()
         themeMode = try container.decodeIfPresent(AppThemeMode.self, forKey: .themeMode) ?? .system
         nowPinnedJobIDs = try container.decodeIfPresent([UUID].self, forKey: .nowPinnedJobIDs) ?? []
-        nowPinnedProjectIDs = try container.decodeIfPresent([UUID].self, forKey: .nowPinnedProjectIDs) ?? []
+        _ = try container.decodeIfPresent([UUID].self, forKey: .nowPinnedProjectIDs)
         nowSuppressedJobIDs = try container.decodeIfPresent([UUID].self, forKey: .nowSuppressedJobIDs) ?? []
-        nowSuppressedProjectIDs = try container.decodeIfPresent([UUID].self, forKey: .nowSuppressedProjectIDs) ?? []
+        _ = try container.decodeIfPresent([UUID].self, forKey: .nowSuppressedProjectIDs)
         focusCardDensity = try container.decodeIfPresent(FocusCardDensity.self, forKey: .focusCardDensity) ?? .standard
         newNowTaskPlacement = try container.decodeIfPresent(NewNowTaskPlacement.self, forKey: .newNowTaskPlacement) ?? .bottom
         focusOverlayPresenceMode = try container.decodeIfPresent(FocusOverlayPresenceMode.self, forKey: .focusOverlayPresenceMode)
@@ -180,9 +173,7 @@ struct WorkspaceSnapshot: Codable {
         try container.encode(tasksPresentation, forKey: .tasksPresentation)
         try container.encode(themeMode, forKey: .themeMode)
         try container.encode(nowPinnedJobIDs, forKey: .nowPinnedJobIDs)
-        try container.encode(nowPinnedProjectIDs, forKey: .nowPinnedProjectIDs)
         try container.encode(nowSuppressedJobIDs, forKey: .nowSuppressedJobIDs)
-        try container.encode(nowSuppressedProjectIDs, forKey: .nowSuppressedProjectIDs)
         try container.encode(focusCardDensity, forKey: .focusCardDensity)
         try container.encode(newNowTaskPlacement, forKey: .newNowTaskPlacement)
         try container.encode(focusOverlayPresenceMode, forKey: .focusOverlayPresenceMode)

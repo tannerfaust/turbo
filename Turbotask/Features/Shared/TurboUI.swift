@@ -146,7 +146,70 @@ struct TurboProgressBar: View {
     }
 }
 
-// MARK: - Job accent & project emoji
+// MARK: - Field accent & project emoji
+
+/// Inline editor for a field’s display name and accent color.
+struct FieldAppearanceEditor: View {
+    @EnvironmentObject private var store: TurboTaskStore
+
+    let jobID: UUID
+    var showsSummary: Bool = false
+    var titleFont: Font = .title3.weight(.semibold)
+
+    private var job: Job? { store.job(id: jobID) }
+
+    var body: some View {
+        if let job {
+            VStack(alignment: .leading, spacing: 12) {
+                TextField(
+                    "Field name",
+                    text: Binding(
+                        get: { job.title },
+                        set: { value in
+                            store.updateJob(jobID: jobID) { $0.title = value }
+                        }
+                    )
+                )
+                .font(titleFont)
+                .textFieldStyle(.plain)
+                .foregroundStyle(TurboTheme.ink)
+
+                if showsSummary {
+                    TextField(
+                        "Summary — what this field is for",
+                        text: Binding(
+                            get: { job.summary },
+                            set: { value in
+                                store.updateJob(jobID: jobID) { $0.summary = value }
+                            }
+                        ),
+                        axis: .vertical
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(TurboTheme.mutedInk)
+                    .textFieldStyle(.plain)
+                    .lineLimit(2...5)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Accent color")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TurboTheme.mutedInk)
+                    JobPaletteSwatchRow(selection: paletteBinding)
+                }
+            }
+        }
+    }
+
+    private var paletteBinding: Binding<JobPalette> {
+        Binding(
+            get: { store.job(id: jobID)?.palette ?? .forest },
+            set: { palette in
+                store.updateJob(jobID: jobID) { $0.palette = palette }
+            }
+        )
+    }
+}
 
 struct JobPaletteSwatchRow: View {
     @Binding var selection: JobPalette
@@ -180,9 +243,28 @@ struct JobPaletteSwatchRow: View {
 }
 
 private let projectEmojiChoices: [String] = [
-    "📁", "📌", "🎯", "✨", "🚀", "💼", "🏠", "📣", "🛠️", "📊", "🎨", "🔧", "📝", "💡", "🧪",
-    "⚡️", "🌐", "🔒", "📱", "💬", "🗂️", "✅", "🔥", "⭐️", "🎵", "🏃", "🧭", "📈", "🤝", "💰",
-    "☕️", "🌱", "🤖", "📮", "🔔", "🎬", "💳", "🧾", "📅", "🛡️", "🔑"
+    // Folders & files
+    "📁", "📂", "🗂️", "📋", "📎", "📌", "📍", "📝", "✏️", "✍️", "📄", "📃", "🗒️", "📑",
+    // Goals & status
+    "🎯", "✅", "✔️", "⭐️", "🌟", "🏆", "🥇", "🔥", "⚡️", "💡", "✨", "🚀",
+    // Work & business
+    "💼", "🏢", "📊", "📈", "📉", "💰", "💵", "💳", "🧾", "🤝", "👥", "👤",
+    // Communication
+    "💬", "🗣️", "📣", "📢", "📧", "📮", "📞", "📱", "💻", "🖥️", "⌨️", "🖱️",
+    // Creative
+    "🎨", "🖌️", "🎬", "🎵", "🎧", "🎮", "📷", "🎤", "🎭", "📚", "📖",
+    // Tools & tech
+    "🛠️", "🔧", "🔩", "⚙️", "🤖", "🧪", "🔬", "🧬", "🌐", "🔗", "🔒", "🔑", "🛡️",
+    // Home & life
+    "🏠", "🏡", "🛒", "🧹", "🍳", "☕️", "🍎", "🌱", "🌿", "🌸", "🐾", "❤️",
+    // Travel & places
+    "✈️", "🚗", "🚲", "🧭", "🗺️", "🌍", "🏖️", "⛰️",
+    // Time & planning
+    "📅", "🗓️", "⏰", "⏱️", "🔔", "📆",
+    // Sports & health
+    "🏃", "💪", "🧘", "⚽️", "🏀", "🎾", "🧠", "💊",
+    // Misc
+    "🎁", "🎉", "🧩", "🪴", "☀️", "🌙", "🌊", "🍀", "🦄", "🎲", "🏷️", "🔖"
 ]
 
 struct EmojiPickButton: View {
@@ -235,7 +317,7 @@ struct EmojiPickButton: View {
                         }
                     }
                 }
-                .frame(maxHeight: 240)
+                .frame(maxHeight: 320)
                 Button("Clear icon") {
                     emoji = ""
                     pickerOpen = false
@@ -245,7 +327,7 @@ struct EmojiPickButton: View {
                 .foregroundStyle(TurboTheme.mutedInk)
             }
             .padding(12)
-            .frame(width: 268)
+            .frame(width: 300)
         }
         .trainingWheelsTooltip("Choose project emoji")
     }

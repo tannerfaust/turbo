@@ -233,11 +233,12 @@ struct ScreenShortcutBar: View {
                 ("⌘N", "Quick add"),
                 ("⌘E", "Edit"),
                 ("⇧⌘F", "Focus card"),
-                ("Drag", "Reorder"),
+                ("⇧⌘L", "List / Kanban / tree"),
+                ("Drag", "Reorder or move columns"),
             ]
         case .projects:
             return [
-                ("←→", "Switch job"),
+                ("←→", "Switch field"),
                 ("↑↓", "Select project"),
                 ("⇧⌘P", "New project"),
                 ("⌘T", "New task"),
@@ -251,12 +252,13 @@ struct ScreenShortcutBar: View {
                 ("⌘D", "Done"),
                 ("⌘P", "Pause"),
                 ("⌃⌘1-5", "Set status"),
+                ("Drag", "Kanban columns"),
             ]
         case .jobs:
             return [
-                ("↑↓", "Select job"),
-                ("↩", "Pick job"),
-                ("⇧⌘J", "New job"),
+                ("↑↓", "Select field"),
+                ("↩", "Pick field"),
+                ("⇧⌘J", "New field"),
                 ("⌘T", "New task"),
             ]
         case .metrics:

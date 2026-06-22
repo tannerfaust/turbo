@@ -33,6 +33,7 @@ struct TaskEditorDialog: View {
     @State private var hasEndDate: Bool
     @State private var planStart = Date()
     @State private var planEnd = Date()
+    @State private var blockedByTaskIDs: [UUID]
 
     init(context: TaskContext) {
         self.context = context
@@ -55,6 +56,7 @@ struct TaskEditorDialog: View {
         _hasEndDate = State(initialValue: context.task.endDate != nil)
         _planStart = State(initialValue: context.task.startDate ?? Date())
         _planEnd = State(initialValue: context.task.endDate ?? Date())
+        _blockedByTaskIDs = State(initialValue: context.task.blockedByTaskIDs)
     }
 
     var body: some View {
@@ -74,8 +76,8 @@ struct TaskEditorDialog: View {
             Form {
                 if !store.jobs.isEmpty {
                     Section("Location") {
-                        Picker("Job", selection: $selectedJobID) {
-                            Text("Inbox (no job)").tag(nil as UUID?)
+                        Picker("Field", selection: $selectedJobID) {
+                            Text("Inbox (no field)").tag(nil as UUID?)
                             ForEach(store.jobs) { job in
                                 Text(job.title).tag(Optional(job.id))
                             }
@@ -84,7 +86,7 @@ struct TaskEditorDialog: View {
 
                         if selectedJobID != nil {
                             Picker("Project", selection: $selectedProjectID) {
-                                Text("None — task on job only").tag(nil as UUID?)
+                                Text("None — task on field only").tag(nil as UUID?)
                                 ForEach(availableProjects) { project in
                                     Text(project.project.displayTitle).tag(Optional(project.project.id))
                                 }
@@ -177,7 +179,7 @@ struct TaskEditorDialog: View {
                     Toggle("Show in Now", isOn: $isScheduledNow)
                         .trainingWheelsTooltip("Toggle Now scheduling · ⌥⌘B")
 
-                    Toggle("Archived (hidden from Now and job lists)", isOn: $isArchived)
+                    Toggle("Archived (hidden from Now and field lists)", isOn: $isArchived)
                         .trainingWheelsTooltip("Archive hides the task from active lists")
                 }
 
@@ -198,6 +200,68 @@ struct TaskEditorDialog: View {
                             message: "These dates are informational. They help with planning and overdue visibility, but they do not drive the task state."
                         )
                     }
+                }
+
+                Section {
+                    if blockedByTaskIDs.isEmpty {
+                        Text("No prerequisites. This task can start anytime.")
+                            .font(.subheadline)
+                            .foregroundStyle(TurboTheme.mutedInk)
+                    } else {
+                        ForEach(blockedByTaskIDs, id: \.self) { blockerID in
+                            HStack(spacing: 8) {
+                                Image(systemName: "link")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color(red: 0.52, green: 0.38, blue: 0.96))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(blockerTitle(for: blockerID))
+                                        .font(.subheadline.weight(.medium))
+                                    Text(blockerMeta(for: blockerID))
+                                        .font(.caption)
+                                        .foregroundStyle(TurboTheme.mutedInk)
+                                }
+                                Spacer(minLength: 0)
+                                Button {
+                                    blockedByTaskIDs.removeAll { $0 == blockerID }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(TurboTheme.mutedInk)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Remove prerequisite")
+                            }
+                        }
+                    }
+
+                    Menu {
+                        if dependencyCandidates.isEmpty {
+                            Text("No other tasks available")
+                        } else {
+                            ForEach(dependencyCandidates) { candidate in
+                                Button {
+                                    blockedByTaskIDs.append(candidate.task.id)
+                                    blockedByTaskIDs = Task.normalizedBlockedByTaskIDs(blockedByTaskIDs, for: context.task.id)
+                                } label: {
+                                    Text(candidate.task.title)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label("Add prerequisite…", systemImage: "link.badge.plus")
+                    }
+                    .disabled(dependencyCandidates.isEmpty)
+                } header: {
+                    HStack(spacing: 6) {
+                        Text("Starts after")
+                        TurboInfoButton(
+                            title: "Task dependencies",
+                            message: "Linked tasks stay in Not Started until every prerequisite is Done. When the last blocker finishes, follow-ups move to In Progress automatically."
+                        )
+                    }
+                } footer: {
+                    Text("In Kanban, hold Option and drop one card onto another to link them the same way.")
+                        .font(.caption)
+                        .foregroundStyle(TurboTheme.mutedInk)
                 }
 
                 if cadence == .repeatable {
@@ -285,6 +349,7 @@ struct TaskEditorDialog: View {
             task.priority = 3
             task.startDate = hasStartDate ? cal.startOfDay(for: planStart) : nil
             task.endDate = hasEndDate ? cal.startOfDay(for: planEnd) : nil
+            task.blockedByTaskIDs = Task.normalizedBlockedByTaskIDs(blockedByTaskIDs, for: task.id)
             if cadence == .oneOff {
                 task.repeatEveryMinutes = nil
                 task.kpiTarget = nil
@@ -322,10 +387,49 @@ struct TaskEditorDialog: View {
             if initialStatus != status,
                let latest = store.taskContext(taskID: context.task.id) {
                 store.setTaskStatus(latest, status: status)
+            } else if let latest = store.taskContext(taskID: context.task.id),
+                      store.isTaskBlocked(latest),
+                      latest.task.status == .active {
+                store.setTaskStatus(latest, status: .queued, bypassMultitaskUpgradePrompt: true)
             }
         }
 
         dismiss()
+    }
+
+    private var dependencyCandidates: [TaskContext] {
+        store.taskContexts
+            .filter { candidate in
+                candidate.task.id != context.task.id
+                    && !candidate.task.isArchived
+                    && !blockedByTaskIDs.contains(candidate.task.id)
+                    && !wouldCreateCycle(ifAdding: candidate.task.id)
+            }
+            .sorted { $0.task.title.localizedCaseInsensitiveCompare($1.task.title) == .orderedAscending }
+    }
+
+    private func wouldCreateCycle(ifAdding prerequisiteID: UUID) -> Bool {
+        guard let prerequisite = store.taskContext(taskID: prerequisiteID) else { return true }
+        var visited = Set<UUID>()
+        var stack = prerequisite.task.blockedByTaskIDs
+        while let current = stack.popLast() {
+            guard visited.insert(current).inserted else { continue }
+            if current == context.task.id { return true }
+            guard let ctx = store.taskContext(taskID: current) else { continue }
+            stack.append(contentsOf: ctx.task.blockedByTaskIDs)
+        }
+        return false
+    }
+
+    private func blockerTitle(for id: UUID) -> String {
+        store.taskContext(taskID: id)?.task.title ?? "Missing task"
+    }
+
+    private func blockerMeta(for id: UUID) -> String {
+        guard let ctx = store.taskContext(taskID: id) else { return "Task was deleted" }
+        let status = ctx.task.status == .done ? "Done" : ctx.task.status.title
+        let location = ctx.metaSubtitleParts.joined(separator: " · ")
+        return location.isEmpty ? status : "\(status) · \(location)"
     }
 
     private var availableProjects: [ProjectContext] {

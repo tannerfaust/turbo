@@ -48,7 +48,7 @@ struct AppShellView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Menu {
-                    Button("New Job") {
+                    Button("New Field") {
                         store.openComposer(.job)
                     }
                     .keyboardShortcut("j", modifiers: [.command, .shift])
@@ -76,7 +76,7 @@ struct AppShellView: View {
                 } label: {
                     Label("New", systemImage: "plus.circle")
                 }
-                .trainingWheelsTooltip("Create job, project, task, or jump to quick add")
+                .trainingWheelsTooltip("Create field, project, task, or jump to quick add")
 
                 Button {
                     store.toggleOverlay()
@@ -122,6 +122,19 @@ struct AppShellView: View {
             }
         } message: {
             Text(store.parallelActiveLimitMessage ?? "")
+        }
+        .alert(
+            "Waiting on other tasks",
+            isPresented: Binding(
+                get: { store.dependencyNoticeMessage != nil },
+                set: { val in DispatchQueue.main.async { if !val { store.clearDependencyNoticeMessage() } } }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                store.clearDependencyNoticeMessage()
+            }
+        } message: {
+            Text(store.dependencyNoticeMessage ?? "")
         }
         .tint(TurboTheme.accent)
         .preferredColorScheme(store.preferredColorScheme)

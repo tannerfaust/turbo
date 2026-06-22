@@ -20,9 +20,9 @@ enum NowListGroupingMode: String, CaseIterable, Identifiable {
         case .none:
             "Off"
         case .jobs:
-            "Jobs"
+            "Fields"
         case .jobsAndProjects:
-            "Jobs + Projects"
+            "Fields + Projects"
         }
     }
 }
@@ -91,6 +91,7 @@ enum JobPalette: String, CaseIterable, Identifiable, Hashable, Codable {
     case copper
     case cyan
     case iris
+    case grey
 
     var id: String { rawValue }
 
@@ -130,6 +131,8 @@ enum JobPalette: String, CaseIterable, Identifiable, Hashable, Codable {
             "Cyan"
         case .iris:
             "Iris"
+        case .grey:
+            "Grey"
         }
     }
 
@@ -169,6 +172,8 @@ enum JobPalette: String, CaseIterable, Identifiable, Hashable, Codable {
             Color(red: 0.0, green: 0.76, blue: 0.92)
         case .iris:
             Color(red: 0.40, green: 0.50, blue: 1.0)
+        case .grey:
+            Color(red: 0.52, green: 0.52, blue: 0.56)
         }
     }
 }
@@ -320,6 +325,8 @@ struct Task: Identifiable, Hashable, Codable {
     var isArchived: Bool
     /// When the task was archived; used for retention purge. Nil for legacy data until migration fills it.
     var archivedAt: Date?
+    /// Task IDs that must reach Done before this task can start.
+    var blockedByTaskIDs: [UUID]
 
     init(
         id: UUID = UUID(),
@@ -346,7 +353,8 @@ struct Task: Identifiable, Hashable, Codable {
         startDate: Date? = nil,
         endDate: Date? = nil,
         isArchived: Bool = false,
-        archivedAt: Date? = nil
+        archivedAt: Date? = nil,
+        blockedByTaskIDs: [UUID] = []
     ) {
         self.id = id
         self.title = title
@@ -373,6 +381,7 @@ struct Task: Identifiable, Hashable, Codable {
         self.endDate = endDate
         self.isArchived = isArchived
         self.archivedAt = archivedAt
+        self.blockedByTaskIDs = Task.normalizedBlockedByTaskIDs(blockedByTaskIDs, for: id)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -402,6 +411,20 @@ struct Task: Identifiable, Hashable, Codable {
         case endDate
         case isArchived
         case archivedAt
+        case blockedByTaskIDs
+    }
+
+    static let maxDependenciesPerTask = 24
+
+    static func normalizedBlockedByTaskIDs(_ raw: [UUID], for taskID: UUID) -> [UUID] {
+        var seen = Set<UUID>()
+        var out: [UUID] = []
+        for id in raw where id != taskID {
+            guard seen.insert(id).inserted else { continue }
+            out.append(id)
+            if out.count >= maxDependenciesPerTask { break }
+        }
+        return out
     }
 
     static func normalizedToolBundleIDs(_ raw: [String]) -> [String] {
@@ -447,6 +470,10 @@ struct Task: Identifiable, Hashable, Codable {
         endDate = try container.decodeIfPresent(Date.self, forKey: .endDate)
         isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
+        blockedByTaskIDs = Task.normalizedBlockedByTaskIDs(
+            try container.decodeIfPresent([UUID].self, forKey: .blockedByTaskIDs) ?? [],
+            for: id
+        )
     }
 
     func encode(to encoder: Encoder) throws {
@@ -476,6 +503,7 @@ struct Task: Identifiable, Hashable, Codable {
         try container.encodeIfPresent(endDate, forKey: .endDate)
         try container.encode(isArchived, forKey: .isArchived)
         try container.encodeIfPresent(archivedAt, forKey: .archivedAt)
+        try container.encode(blockedByTaskIDs, forKey: .blockedByTaskIDs)
     }
 
     /// Copies every mutable field from `other` onto `self` (same `id` required). Used for ⌘Z undo.
@@ -505,6 +533,7 @@ struct Task: Identifiable, Hashable, Codable {
         endDate = other.endDate
         isArchived = other.isArchived
         archivedAt = other.archivedAt
+        blockedByTaskIDs = other.blockedByTaskIDs
     }
 
     /// `true` when the task is not done and the calendar day is past the end date.
@@ -804,7 +833,7 @@ enum TaskVisibleField: String, CaseIterable, Identifiable, Hashable, Codable {
         case .project:
             "Project"
         case .job:
-            "Job"
+            "Field"
         case .status:
             "Status"
         case .energy:

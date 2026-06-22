@@ -90,14 +90,6 @@ struct NowView: View {
     @State private var visibleTaskFrames: [UUID: CGRect] = [:]
     @State private var pendingSelectionRevealAnimated: Bool?
 
-    private var weekdayTitle: String {
-        Date.now.formatted(.dateTime.weekday(.wide))
-    }
-
-    private var dateTitle: String {
-        Date.now.formatted(.dateTime.day().month(.abbreviated))
-    }
-
     private var upcomingRepeatables: [TaskContext] {
         store.taskContexts
             .filter { context in
@@ -118,15 +110,6 @@ struct NowView: View {
         }
     }
 
-    private var availableProjectChoices: [ProjectContext] {
-        let visibleProjectIDs = Set(store.visibleNowProjectIDs)
-        let allowedJobIDs = Set(store.visibleNowJobIDs)
-        return store.projectContexts.filter { context in
-            guard allowedJobIDs.contains(context.jobID) else { return false }
-            return !visibleProjectIDs.contains(context.project.id)
-        }
-    }
-
     private var listGrouping: NowListGroupingMode {
         NowListGroupingMode(rawValue: listGroupingRawValue) ?? .none
     }
@@ -143,44 +126,31 @@ struct NowView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack(alignment: .center, spacing: 10) {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .center, spacing: 10) {
                                 Text("Now")
                                     .font(.system(size: 22, weight: .semibold))
                                     .foregroundStyle(TurboTheme.ink)
-                                Text("\(weekdayTitle) · \(dateTitle)")
-                                    .font(.subheadline)
-                                    .foregroundStyle(TurboTheme.mutedInk)
-                            }
-                            Spacer(minLength: 8)
-                            Picker("View", selection: $viewMode) {
-                                ForEach(NowBoardMode.allCases) { mode in
-                                    Text(mode.title).tag(mode)
+                                Spacer(minLength: 8)
+                                Picker("View", selection: $viewMode) {
+                                    ForEach(NowBoardMode.allCases) { mode in
+                                        Text(mode.title).tag(mode)
+                                    }
                                 }
+                                .pickerStyle(.segmented)
+                                .controlSize(.small)
+                                .frame(width: 220)
+                                .trainingWheelsTooltip("List, Kanban, or tree · ⇧⌘L")
                             }
-                            .pickerStyle(.segmented)
-                            .controlSize(.small)
-                            .frame(width: 148)
-                            .trainingWheelsTooltip("List vs tree · ⇧⌘L")
 
-                            Picker("Group", selection: listGroupingBinding) {
-                                ForEach(NowListGroupingMode.allCases) { mode in
-                                    Text(mode.title).tag(mode)
-                                }
+                            if viewMode == .list {
+                                NowListGroupingFilterBar(selection: listGroupingBinding)
                             }
-                            .pickerStyle(.menu)
-                            .controlSize(.small)
-                            .frame(width: 132)
-                            .disabled(viewMode != .list)
-                            .help("Optional grouping for the list view.")
-                            .trainingWheelsTooltip("Grouping for list view · ⌥⌘0 off · ⌥⌘J jobs · ⌥⌘G jobs + projects")
                         }
 
                         TodayScopeBar(
                             visibleJobs: store.visibleNowJobs,
-                            visibleProjects: store.visibleNowProjects,
-                            availableJobChoices: availableJobChoices,
-                            availableProjectChoices: availableProjectChoices
+                            availableJobChoices: availableJobChoices
                         )
                         .environmentObject(store)
 
@@ -204,6 +174,14 @@ struct NowView: View {
                                 onEditTask: { editingTask = $0 }
                             )
                             .environmentObject(store)
+                        case .kanban:
+                            TaskKanbanBoard(
+                                tasks: scoped,
+                                mode: .now,
+                                onEditTask: { editingTask = $0 }
+                            )
+                            .environmentObject(store)
+                            .frame(minHeight: 420)
                         case .tree:
                             NowTreeWithDoneSection(
                                 openTasks: scoped.filter { $0.task.status != .done },
@@ -256,7 +234,11 @@ struct NowView: View {
                         case .focusQuickAdd:
                             quickCreateExpanded.toggle()
                         case .toggleViewMode:
-                            viewMode = viewMode == .list ? .tree : .list
+                            switch viewMode {
+                            case .list: viewMode = .kanban
+                            case .kanban: viewMode = .tree
+                            case .tree: viewMode = .list
+                            }
                         case .setListGrouping(let grouping):
                             listGroupingRawValue = grouping.rawValue
                         case .openEditorForSelection:
@@ -476,10 +458,7 @@ private struct NowQuickCreateBar: View {
     @State private var target: NowQuickCreateTarget = .inbox
 
     private var projectMenuSources: [ProjectContext] {
-        if !store.visibleNowProjects.isEmpty {
-            return store.visibleNowProjects
-        }
-        return store.projectContexts
+        store.projectContexts
     }
 
     private var canCreate: Bool {
@@ -555,9 +534,6 @@ private struct NowQuickCreateBar: View {
         .onChange(of: store.jobs.count) {
             syncQuickCreateTarget()
         }
-        .onChange(of: store.nowPinnedProjectIDs) {
-            syncQuickCreateTarget()
-        }
         .onChange(of: isExpanded) {
             if isExpanded {
                 syncQuickCreateTarget()
@@ -603,7 +579,7 @@ private struct NowQuickCreateBar: View {
             }
 
             if !store.jobs.isEmpty {
-                Menu("Job tasks") {
+                Menu("Field tasks") {
                     ForEach(store.jobs) { job in
                         Button {
                             target = .jobTask(jobID: job.id)
@@ -691,7 +667,7 @@ private struct NowQuickCreateBar: View {
         case .inbox:
             "Inbox"
         case .jobTask(let jobID):
-            store.jobs.first(where: { $0.id == jobID })?.title ?? "Job"
+            store.jobs.first(where: { $0.id == jobID })?.title ?? "Field"
         case .project(_, let projectID):
             store.projectContexts.first(where: { $0.project.id == projectID })?.project.displayTitle ?? "Project"
         }
@@ -770,8 +746,71 @@ private struct NowQuickCreateBar: View {
     }
 }
 
+private struct NowListGroupingFilterBar: View {
+    @Binding var selection: NowListGroupingMode
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 5) {
+                ForEach(NowListGroupingMode.allCases) { mode in
+                    NowListGroupingChip(
+                        title: mode.title,
+                        isSelected: selection == mode
+                    ) {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            selection = mode
+                        }
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("List grouping")
+        .help("Optional grouping for the list view.")
+        .trainingWheelsTooltip("Grouping for list view · ⌥⌘0 off · ⌥⌘J fields · ⌥⌘G fields + projects")
+    }
+}
+
+private struct NowListGroupingChip: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    private var chipShape: Capsule { Capsule() }
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(isSelected ? TurboTheme.ink : TurboTheme.mutedInk)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(chipBackground)
+                .overlay(chipShape.stroke(chipStroke, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var chipBackground: some View {
+        if isSelected {
+            chipShape.fill(TurboTheme.accentSoft.opacity(0.72))
+        } else {
+            chipShape
+                .fill(TurboTheme.nestedCardFill.opacity(0.45))
+                .background(chipShape.fill(.ultraThinMaterial))
+        }
+    }
+
+    private var chipStroke: Color {
+        isSelected ? TurboTheme.accent.opacity(0.38) : TurboTheme.divider.opacity(0.72)
+    }
+}
+
 private enum NowBoardMode: String, CaseIterable, Identifiable {
     case list
+    case kanban
     case tree
 
     var id: String { rawValue }
@@ -779,6 +818,7 @@ private enum NowBoardMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .list: "List"
+        case .kanban: "Kanban"
         case .tree: "Tree"
         }
     }
@@ -786,6 +826,7 @@ private enum NowBoardMode: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .list: "list.bullet"
+        case .kanban: "square.grid.3x2"
         case .tree: "point.3.filled.connected.trianglepath.dotted"
         }
     }
@@ -795,28 +836,16 @@ private struct TodayScopeBar: View {
     @EnvironmentObject private var store: TurboTaskStore
 
     let visibleJobs: [Job]
-    let visibleProjects: [ProjectContext]
     let availableJobChoices: [Job]
-    let availableProjectChoices: [ProjectContext]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ScopeRail(
-                label: "Jobs", addMenuTitle: "Add Job",
-                chips: visibleJobs.map { ScopeChipModel(id: $0.id, title: $0.title, tint: $0.palette.color) },
-                addChoices: availableJobChoices.map { ScopeMenuChoice(id: $0.id, title: $0.title, subtitle: "\($0.projects.count) projects", tint: $0.palette.color) },
-                onAdd: { store.pinNowJob($0) },
-                onRemove: { store.removeJobFromNowScope($0) }
-            )
-
-            ScopeRail(
-                label: "Projects", addMenuTitle: "Add Project",
-                chips: visibleProjects.map { ScopeChipModel(id: $0.project.id, title: $0.project.displayTitle, subtitle: visibleJobs.count > 1 ? $0.jobTitle : nil, tint: $0.jobColor) },
-                addChoices: availableProjectChoices.map { ScopeMenuChoice(id: $0.project.id, title: $0.project.displayTitle, subtitle: $0.jobTitle, tint: $0.jobColor) },
-                onAdd: { store.pinNowProject($0) },
-                onRemove: { store.removeProjectFromNowScope($0) }
-            )
-        }
+        ScopeRail(
+            label: "Fields", addMenuTitle: "Add Field",
+            chips: visibleJobs.map { ScopeChipModel(id: $0.id, title: $0.title, tint: $0.palette.color) },
+            addChoices: availableJobChoices.map { ScopeMenuChoice(id: $0.id, title: $0.title, subtitle: "\($0.projects.count) projects", tint: $0.palette.color) },
+            onAdd: { store.pinNowJob($0) },
+            onRemove: { store.removeJobFromNowScope($0) }
+        )
         .help("Scope filters limit which tasks appear on Now. Remove a chip with \u{00D7}; add with +.")
     }
 }
@@ -843,6 +872,10 @@ private struct ScopeRail: View {
     let onAdd: (UUID) -> Void
     let onRemove: (UUID) -> Void
 
+    private var addButtonShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
             Text(label)
@@ -850,54 +883,58 @@ private struct ScopeRail: View {
                 .foregroundStyle(TurboTheme.mutedInk)
                 .frame(width: 56, alignment: .leading)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    if chips.isEmpty {
-                        Text("\u{2014}")
-                            .font(.caption2)
-                            .foregroundStyle(TurboTheme.mutedInk.opacity(0.55))
-                            .padding(.vertical, 2)
-                    } else {
-                        ForEach(chips) { chip in
-                            ScopeChip(chip: chip, onRemove: { onRemove(chip.id) })
-                        }
-                    }
-                }
-            }
-
-            Menu {
-                if addChoices.isEmpty {
-                    Text("Nothing else to add")
-                } else {
-                    ForEach(addChoices) { choice in
-                        Button {
-                            onAdd(choice.id)
-                        } label: {
-                            Label {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(choice.title)
-                                    Text(choice.subtitle)
-                                }
-                            } icon: {
-                                Circle().fill(choice.tint).frame(width: 10, height: 10)
+            HStack(alignment: .center, spacing: 4) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        if chips.isEmpty {
+                            Text("\u{2014}")
+                                .font(.caption2)
+                                .foregroundStyle(TurboTheme.mutedInk.opacity(0.55))
+                                .padding(.vertical, 2)
+                        } else {
+                            ForEach(chips) { chip in
+                                ScopeChip(chip: chip, onRemove: { onRemove(chip.id) })
                             }
                         }
                     }
                 }
+
+                Menu {
+                    if addChoices.isEmpty {
+                        Text("Nothing else to add")
+                    } else {
+                        ForEach(addChoices) { choice in
+                            Button {
+                                onAdd(choice.id)
+                            } label: {
+                                Label {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(choice.title)
+                                        Text(choice.subtitle)
+                                    }
+                                } icon: {
+                                    Circle().fill(choice.tint).frame(width: 10, height: 10)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(TurboTheme.mutedInk)
+                        .frame(width: 20, height: 20)
+                        .background(
+                            addButtonShape
+                                .fill(TurboTheme.nestedCardFill.opacity(0.45))
+                                .background(addButtonShape.fill(.ultraThinMaterial))
+                        )
+                        .overlay(addButtonShape.stroke(TurboTheme.divider.opacity(0.72), lineWidth: 1))
+                }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
+                .fixedSize()
+                .trainingWheelsTooltip(addMenuTitle)
             }
-            label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(TurboTheme.mutedInk)
-                    .frame(width: 20, height: 20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .stroke(TurboTheme.divider.opacity(0.9), lineWidth: 1)
-                    )
-            }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.plain)
-            .trainingWheelsTooltip(addMenuTitle)
         }
     }
 }
@@ -1455,11 +1492,6 @@ private struct TreeMiniTaskNode: View {
                 }
                 .accessibilityLabel("Reorder")
 
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(context.jobColor)
-                .frame(width: rowFlashActive ? 3 : 2, height: 30)
-                .opacity(context.task.status == .done ? 0.35 : 0.95)
-
             TaskStatusRowIndicator(status: context.task.status, jobColor: context.jobColor, diameter: 15)
                 .accessibilityHidden(true)
 
@@ -1497,11 +1529,11 @@ private struct TreeMiniTaskNode: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(rowFlashActive ? TurboTheme.rowSelected : TurboTheme.nestedCardFill.opacity(0.72))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(rowFlashActive ? context.jobColor.opacity(0.35) : TurboTheme.cardStroke.opacity(0.55), lineWidth: 1)
-                )
+                .fill(treeMiniCardFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(treeMiniCardBorder, lineWidth: rowFlashActive ? 1.5 : 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .id(context.task.id)
@@ -1515,6 +1547,22 @@ private struct TreeMiniTaskNode: View {
                 .environmentObject(store)
         }
         .trainingWheelsTooltip("\u{2191}\u{2193} change selection \u{00B7} \u{21A9} starts \u{00B7} \u{2318}\u{21A9} start \u{00B7} \u{2318}P pause \u{00B7} \u{2318}D done \u{00B7} Right-click for more")
+    }
+
+    private var treeMiniCardFill: Color {
+        let done = context.task.status == .done
+        if rowFlashActive {
+            return context.jobColor.opacity(done ? 0.10 : 0.14)
+        }
+        return context.jobColor.opacity(done ? 0.06 : 0.10)
+    }
+
+    private var treeMiniCardBorder: Color {
+        let done = context.task.status == .done
+        if rowFlashActive {
+            return context.jobColor.opacity(done ? 0.38 : 0.50)
+        }
+        return context.jobColor.opacity(done ? 0.28 : 0.40)
     }
 }
 
