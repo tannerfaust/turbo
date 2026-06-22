@@ -54,6 +54,12 @@ struct TaskRowContextMenuItems: View {
                 Label("Change Type", systemImage: "arrow.triangle.swap")
             }
 
+            Button {
+                store.beginDependencyLinking(for: context.task.id)
+            } label: {
+                Label("Add prerequisite…", systemImage: "link.badge.plus")
+            }
+
             Menu {
                 let candidates = dependencyFollowUpCandidates
                 if candidates.isEmpty {

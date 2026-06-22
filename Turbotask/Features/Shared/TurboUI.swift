@@ -48,6 +48,52 @@ struct TurboTag: View {
     }
 }
 
+// MARK: - Liquid glass chip surfaces
+
+struct GlassChipFill<S: Shape>: View {
+    let shape: S
+
+    var body: some View {
+        shape
+            .fill(TurboTheme.nestedCardFill.opacity(0.45))
+            .background(shape.fill(.ultraThinMaterial))
+    }
+}
+
+struct GlassIconChip: View {
+    let systemName: String
+    var iconSize: CGFloat = 9
+    var dimension: CGFloat = 20
+    var cornerRadius: CGFloat = 5
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: iconSize, weight: .bold))
+            .foregroundStyle(TurboTheme.mutedInk)
+            .frame(width: dimension, height: dimension)
+            .background { GlassChipFill(shape: shape) }
+            .overlay(shape.stroke(TurboTheme.divider.opacity(0.72), lineWidth: 1))
+            .contentShape(shape)
+    }
+}
+
+extension View {
+    /// Inline capsule glass chrome for menu/button pills.
+    /// Solid rounded capsule with visible fill and border.
+    func glassCapsulePillChrome() -> some View {
+        background(
+            Capsule()
+                .fill(TurboTheme.nestedCardFill)
+        )
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(TurboTheme.cardStroke.opacity(0.85), lineWidth: 1))
+    }
+}
+
 struct TurboMetricPill: View {
     let label: String
     let value: String

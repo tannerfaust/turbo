@@ -230,7 +230,7 @@ struct ScreenShortcutBar: View {
                 ("↩", "Start"),
                 ("⌘D", "Done"),
                 ("⌘P", "Pause"),
-                ("⌘N", "Quick add"),
+                ("⌘N", "New task"),
                 ("⌘E", "Edit"),
                 ("⇧⌘F", "Focus card"),
                 ("⇧⌘L", "List / Kanban / tree"),

@@ -20,7 +20,7 @@ struct TaskStatusRowIndicator: View {
             switch status {
             case .queued:
                 Circle()
-                    .stroke(TurboTheme.mutedInk.opacity(0.38), lineWidth: lineWidth)
+                    .stroke(TurboTheme.mutedInk.opacity(0.62), lineWidth: lineWidth)
             case .active:
                 ActiveIndeterminateRing(color: jobColor, lineWidth: lineWidth, diameter: diameter)
             case .waiting:

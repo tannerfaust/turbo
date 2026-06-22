@@ -19,6 +19,7 @@ struct ArchiveView: View {
                 || ctx.task.summary.lowercased().contains(q)
                 || ctx.jobTitle.lowercased().contains(q)
                 || ctx.projectTitle.lowercased().contains(q)
+                || ctx.operationTitle.lowercased().contains(q)
         }
     }
 
@@ -215,6 +216,7 @@ private struct ArchiveTaskRow: View {
         var parts: [String] = []
         if !context.jobTitle.isEmpty { parts.append(context.jobTitle) }
         if !context.projectTitle.isEmpty { parts.append(context.projectTitle) }
+        if !context.operationTitle.isEmpty { parts.append(context.operationTitle) }
         let scope = parts.isEmpty ? "Inbox" : parts.joined(separator: " · ")
         return "\(archivedLine) · \(scope) · \(context.task.status.title)"
     }

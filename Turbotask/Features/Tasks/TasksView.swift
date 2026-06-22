@@ -320,6 +320,14 @@ struct TasksView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(alignment: .bottom) {
+            if store.dependencyLinkingSourceTaskID != nil {
+                DependencyLinkingHintBar()
+                    .environmentObject(store)
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
+            }
+        }
     }
 
     private func reorderTaskInContainer(_ movingID: UUID, before target: TaskContext) {
@@ -419,6 +427,13 @@ struct TasksView: View {
 
             let code = event.keyCode
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+            if code == 53, st.dependencyLinkingSourceTaskID != nil {
+                MainActor.assumeIsolated {
+                    st.cancelDependencyLinking()
+                }
+                return nil
+            }
 
             if flags.contains(.command) { return event }
 
@@ -614,22 +629,6 @@ private struct TasksRegistryRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ReorderHandle()
-                .opacity(isSelected ? 0.5 : 0.15)
-                .onDrag {
-                    drag.draggedID = context.task.id
-                    return NSItemProvider(object: context.task.id.uuidString as NSString)
-                } preview: {
-                    Text(context.task.title)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(TurboTheme.ink)
-                        .lineLimit(1)
-                        .frame(maxWidth: 280, alignment: .leading)
-                        .padding(6)
-                        .background(TurboTheme.cardFill)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-
             Rectangle()
                 .fill(context.jobColor)
                 .frame(width: 3)
@@ -641,7 +640,16 @@ private struct TasksRegistryRow: View {
                     diameter: 15
                 )
 
-                Button(action: onSelect) {
+                Button {
+                    switch store.linkingRole(for: context.task.id) {
+                    case .validTarget:
+                        store.completeDependencyLinking(prerequisiteID: context.task.id)
+                    case .inactive:
+                        onSelect()
+                    case .source, .invalidTarget:
+                        break
+                    }
+                } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(context.task.title)
                             .font(.subheadline.weight(.semibold))
@@ -694,16 +702,25 @@ private struct TasksRegistryRow: View {
             }
         }
         .contentShape(Rectangle())
+        .dependencyLinkingCard(taskID: context.task.id)
         .contextMenu {
             TaskRowContextMenuItems(context: context, onEdit: onEdit)
                 .environmentObject(store)
         }
+        .reorderRowDrag(
+            taskID: context.task.id,
+            title: context.task.title,
+            drag: drag,
+            isEnabled: store.dependencyLinkingSourceTaskID == nil
+        )
+        .opacity(drag.draggedID == context.task.id ? 0.55 : 1)
     }
 
     private var metaLine: String {
         var parts: [String] = []
         if !context.jobTitle.isEmpty { parts.append(context.jobTitle) }
         if !context.projectTitle.isEmpty { parts.append(context.projectTitle) }
+        if !context.operationTitle.isEmpty { parts.append(context.operationTitle) }
         let scope = parts.isEmpty ? "Inbox" : parts.joined(separator: " · ")
         let arch = context.task.isArchived ? "Archived · " : ""
         return "\(arch)\(scope) · \(context.task.energy.shortTitle)"
