@@ -25,6 +25,17 @@ enum NowListGroupingMode: String, CaseIterable, Identifiable {
             "Fields + Projects"
         }
     }
+
+    var menuSymbol: String {
+        switch self {
+        case .none:
+            "list.bullet"
+        case .jobs:
+            "briefcase"
+        case .jobsAndProjects:
+            "square.stack.3d.up"
+        }
+    }
 }
 
 enum NewNowTaskPlacement: String, CaseIterable, Identifiable, Codable {
@@ -186,6 +197,7 @@ struct Job: Identifiable, Hashable, Codable {
     /// Tasks on this job that are not inside any project.
     var jobTasks: [Task]
     var projects: [Project]
+    var operations: [Operation]
 
     init(
         id: UUID = UUID(),
@@ -193,7 +205,8 @@ struct Job: Identifiable, Hashable, Codable {
         summary: String,
         palette: JobPalette,
         jobTasks: [Task] = [],
-        projects: [Project]
+        projects: [Project],
+        operations: [Operation] = []
     ) {
         self.id = id
         self.title = title
@@ -201,6 +214,7 @@ struct Job: Identifiable, Hashable, Codable {
         self.palette = palette
         self.jobTasks = jobTasks
         self.projects = projects
+        self.operations = operations
     }
 
     enum CodingKeys: String, CodingKey {
@@ -210,6 +224,7 @@ struct Job: Identifiable, Hashable, Codable {
         case palette
         case jobTasks
         case projects
+        case operations
     }
 
     init(from decoder: Decoder) throws {
@@ -220,6 +235,7 @@ struct Job: Identifiable, Hashable, Codable {
         palette = try c.decode(JobPalette.self, forKey: .palette)
         jobTasks = try c.decodeIfPresent([Task].self, forKey: .jobTasks) ?? []
         projects = try c.decode([Project].self, forKey: .projects)
+        operations = try c.decodeIfPresent([Operation].self, forKey: .operations) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -230,6 +246,52 @@ struct Job: Identifiable, Hashable, Codable {
         try c.encode(palette, forKey: .palette)
         try c.encode(jobTasks, forKey: .jobTasks)
         try c.encode(projects, forKey: .projects)
+        try c.encode(operations, forKey: .operations)
+    }
+}
+
+/// An ongoing responsibility within a field. Unlike a project it has no outcome or completion state.
+struct Operation: Identifiable, Hashable, Codable {
+    let id: UUID
+    var title: String
+    var summary: String
+    var isArchived: Bool
+    var archivedAt: Date?
+    var tasks: [Task]
+    /// Tasks newly archived by the most recent operation archive action.
+    var cascadeArchivedTaskIDs: [UUID]
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        summary: String = "",
+        isArchived: Bool = false,
+        archivedAt: Date? = nil,
+        tasks: [Task] = [],
+        cascadeArchivedTaskIDs: [UUID] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.summary = summary
+        self.isArchived = isArchived
+        self.archivedAt = archivedAt
+        self.tasks = tasks
+        self.cascadeArchivedTaskIDs = cascadeArchivedTaskIDs
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, summary, isArchived, archivedAt, tasks, cascadeArchivedTaskIDs
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        isArchived = try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+        archivedAt = try c.decodeIfPresent(Date.self, forKey: .archivedAt)
+        tasks = try c.decodeIfPresent([Task].self, forKey: .tasks) ?? []
+        cascadeArchivedTaskIDs = try c.decodeIfPresent([UUID].self, forKey: .cascadeArchivedTaskIDs) ?? []
     }
 }
 
@@ -935,12 +997,15 @@ enum ActivityKind: String, CaseIterable, Identifiable, Hashable, Codable {
 }
 
 struct ActivityEvent: Identifiable, Hashable, Codable {
+    enum ContainerKind: String, Hashable, Codable { case project, operation }
     let id: UUID
     var timestamp: Date
     var kind: ActivityKind
     var taskID: UUID?
     var taskTitle: String
     var projectTitle: String
+    var containerKind: ContainerKind?
+    var containerTitle: String
     var detail: String
     var focusRating: Int?
     var qualityRating: Int?
@@ -953,6 +1018,8 @@ struct ActivityEvent: Identifiable, Hashable, Codable {
         taskID: UUID?,
         taskTitle: String,
         projectTitle: String,
+        containerKind: ContainerKind? = nil,
+        containerTitle: String? = nil,
         detail: String,
         focusRating: Int? = nil,
         qualityRating: Int? = nil,
@@ -964,10 +1031,34 @@ struct ActivityEvent: Identifiable, Hashable, Codable {
         self.taskID = taskID
         self.taskTitle = taskTitle
         self.projectTitle = projectTitle
+        self.containerKind = containerKind ?? (projectTitle.isEmpty ? nil : .project)
+        self.containerTitle = containerTitle ?? projectTitle
         self.detail = detail
         self.focusRating = focusRating
         self.qualityRating = qualityRating
         self.sessionMinutes = sessionMinutes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, timestamp, kind, taskID, taskTitle, projectTitle, containerKind, containerTitle
+        case detail, focusRating, qualityRating, sessionMinutes
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        timestamp = try c.decode(Date.self, forKey: .timestamp)
+        kind = try c.decode(ActivityKind.self, forKey: .kind)
+        taskID = try c.decodeIfPresent(UUID.self, forKey: .taskID)
+        taskTitle = try c.decode(String.self, forKey: .taskTitle)
+        projectTitle = try c.decodeIfPresent(String.self, forKey: .projectTitle) ?? ""
+        containerKind = try c.decodeIfPresent(ContainerKind.self, forKey: .containerKind)
+            ?? (projectTitle.isEmpty ? nil : .project)
+        containerTitle = try c.decodeIfPresent(String.self, forKey: .containerTitle) ?? projectTitle
+        detail = try c.decode(String.self, forKey: .detail)
+        focusRating = try c.decodeIfPresent(Int.self, forKey: .focusRating)
+        qualityRating = try c.decodeIfPresent(Int.self, forKey: .qualityRating)
+        sessionMinutes = try c.decodeIfPresent(Int.self, forKey: .sessionMinutes)
     }
 }
 
@@ -989,14 +1080,28 @@ struct ProjectContext: Identifiable, Hashable {
     }
 }
 
+struct OperationContext: Identifiable, Hashable {
+    var id: UUID { operation.id }
+    var jobID: UUID
+    var jobTitle: String
+    var jobPalette: JobPalette
+    var operation: Operation
+
+    var jobColor: Color { jobPalette.color }
+    var openTaskCount: Int { operation.tasks.filter { !$0.isArchived && $0.status != .done }.count }
+}
+
 struct TaskContext: Identifiable, Hashable {
     var id: UUID { task.id }
     /// `nil` for tasks not assigned to any job (inbox / standalone).
     var jobID: UUID?
     /// `nil` when the task sits on the job directly, not inside a project.
     var projectID: UUID?
+    /// `nil` unless the task belongs to an ongoing operation. Mutually exclusive with `projectID`.
+    var operationID: UUID? = nil
     var jobTitle: String
     var projectTitle: String
+    var operationTitle: String = ""
     var jobPalette: JobPalette
     var task: Task
 
@@ -1009,9 +1114,13 @@ struct TaskContext: Identifiable, Hashable {
         var parts: [String] = []
         if !jobTitle.isEmpty { parts.append(jobTitle) }
         if !projectTitle.isEmpty { parts.append(projectTitle) }
+        if !operationTitle.isEmpty { parts.append(operationTitle) }
         if parts.isEmpty, jobID == nil, projectID == nil {
             parts.append("Inbox")
         }
         return parts
     }
+
+    var containerTitle: String { projectTitle.isEmpty ? operationTitle : projectTitle }
+    var isOperationTask: Bool { operationID != nil }
 }

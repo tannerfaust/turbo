@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		C2080C132F7C8B09000814ED /* Turbo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Turbo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		300000012F7C8B09000814ED /* TurbotaskTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TurbotaskTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,7 +17,21 @@
 			path = Turbotask;
 			sourceTree = "<group>";
 		};
+		300000022F7C8B09000814ED /* TurbotaskTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = TurbotaskTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		300000032F7C8B09000814ED /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		C2080C102F7C8B09000814ED /* Frameworks */ = {
@@ -33,6 +48,7 @@
 			isa = PBXGroup;
 			children = (
 				C2080C152F7C8B09000814ED /* Turbotask */,
+				300000022F7C8B09000814ED /* TurbotaskTests */,
 				C2080C142F7C8B09000814ED /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +57,7 @@
 			isa = PBXGroup;
 			children = (
 				C2080C132F7C8B09000814ED /* Turbo.app */,
+				300000012F7C8B09000814ED /* TurbotaskTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,6 +65,26 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		300000042F7C8B09000814ED /* TurbotaskTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3000000A2F7C8B09000814ED /* Build configuration list for PBXNativeTarget "TurbotaskTests" */;
+			buildPhases = (
+				300000062F7C8B09000814ED /* Sources */,
+				300000032F7C8B09000814ED /* Frameworks */,
+				300000052F7C8B09000814ED /* Resources */,
+			);
+			buildRules = ();
+			dependencies = (
+				300000082F7C8B09000814ED /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				300000022F7C8B09000814ED /* TurbotaskTests */,
+			);
+			name = TurbotaskTests;
+			productName = TurbotaskTests;
+			productReference = 300000012F7C8B09000814ED /* TurbotaskTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		C2080C122F7C8B09000814ED /* Turbotask */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = C2080C1E2F7C8B0A000814ED /* Build configuration list for PBXNativeTarget "Turbotask" */;
@@ -80,9 +117,12 @@
 				LastSwiftUpdateCheck = 2630;
 				LastUpgradeCheck = 2630;
 				TargetAttributes = {
-					C2080C122F7C8B09000814ED = {
+				C2080C122F7C8B09000814ED = {
 						CreatedOnToolsVersion = 26.3;
 					};
+				};
+				300000042F7C8B09000814ED = {
+					CreatedOnToolsVersion = 26.3;
 				};
 			};
 			buildConfigurationList = C2080C0E2F7C8B09000814ED /* Build configuration list for PBXProject "Turbotask" */;
@@ -100,11 +140,18 @@
 			projectRoot = "";
 			targets = (
 				C2080C122F7C8B09000814ED /* Turbotask */,
+				300000042F7C8B09000814ED /* TurbotaskTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		300000052F7C8B09000814ED /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C2080C112F7C8B09000814ED /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -115,6 +162,12 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		300000062F7C8B09000814ED /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C2080C0F2F7C8B09000814ED /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -124,7 +177,55 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXContainerItemProxy section */
+		300000072F7C8B09000814ED /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C2080C0B2F7C8B09000814ED /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C2080C122F7C8B09000814ED;
+			remoteInfo = Turbotask;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		300000082F7C8B09000814ED /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C2080C122F7C8B09000814ED /* Turbotask */;
+			targetProxy = 300000072F7C8B09000814ED /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		3000000B2F7C8B09000814ED /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.1;
+				PRODUCT_BUNDLE_IDENTIFIER = TannerFaust.TurbotaskTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Turbo.app/Contents/MacOS/Turbo";
+			};
+			name = Debug;
+		};
+		3000000C2F7C8B09000814ED /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.1;
+				PRODUCT_BUNDLE_IDENTIFIER = TannerFaust.TurbotaskTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Turbo.app/Contents/MacOS/Turbo";
+			};
+			name = Release;
+		};
 		C2080C1C2F7C8B0A000814ED /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -314,6 +415,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		3000000A2F7C8B09000814ED /* Build configuration list for PBXNativeTarget "TurbotaskTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3000000B2F7C8B09000814ED /* Debug */,
+				3000000C2F7C8B09000814ED /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		C2080C0E2F7C8B09000814ED /* Build configuration list for PBXProject "Turbotask" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

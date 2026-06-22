@@ -15,18 +15,21 @@ final class TurboTaskStore: ObservableObject {
     private struct TaskScopeKey: Hashable {
         var jobID: UUID?
         var projectID: UUID?
+        var operationID: UUID? = nil
     }
 
     private enum TaskStorageLocation {
         case standalone(taskIndex: Int)
         case job(jobIndex: Int, taskIndex: Int)
         case project(jobIndex: Int, projectIndex: Int, taskIndex: Int)
+        case operation(jobIndex: Int, operationIndex: Int, taskIndex: Int)
     }
 
     private struct JobIndexEntry {
         var searchText: String
         var openWorkCount: Int
         var projectCount: Int
+        var operationCount: Int
     }
 
     enum Screen: String, CaseIterable, Identifiable {
@@ -50,7 +53,7 @@ final class TurboTaskStore: ObservableObject {
             case .now:
                 "Now"
             case .projects:
-                "Projects"
+                "Work"
             case .tasks:
                 "Tasks"
             case .jobs:
@@ -91,6 +94,7 @@ final class TurboTaskStore: ObservableObject {
     enum Selection: Hashable {
         case job(UUID)
         case project(jobID: UUID, projectID: UUID)
+        case operation(jobID: UUID, operationID: UUID)
         /// `projectID == nil` means the task lives on the job outside any project; both IDs nil means a standalone task.
         case task(jobID: UUID?, projectID: UUID?, taskID: UUID)
     }
@@ -98,12 +102,13 @@ final class TurboTaskStore: ObservableObject {
     enum ComposerKind {
         case job
         case project
+        case operation
         case task
     }
 
     /// Dispatched from the menu bar so Now actions work from any screen; `NowView` consumes and clears.
     enum NowShortcutAction: Equatable {
-        case focusQuickAdd
+        case openTaskComposer
         case toggleViewMode
         case setListGrouping(NowListGroupingMode)
         case openEditorForSelection
@@ -118,6 +123,7 @@ final class TurboTaskStore: ObservableObject {
         var kind: ComposerKind
         var preferredJobID: UUID?
         var preferredProjectID: UUID?
+        var preferredOperationID: UUID? = nil
         var preferredStatus: TaskStatus?
         var scheduleForNow: Bool
     }
@@ -333,6 +339,7 @@ final class TurboTaskStore: ObservableObject {
         }
     }
     @Published var projectsQuery = ProjectsQuery()
+    @Published var operationsQuery = ProjectsQuery()
     @Published var tasksQuery = TasksQuery()
     @Published var isFocusOverlayVisible = false
     @Published var selection: Selection? {
@@ -353,6 +360,8 @@ final class TurboTaskStore: ObservableObject {
     @Published var parallelActiveLimitMessage: String?
     /// Shown when a task can't start because prerequisites are still open.
     @Published var dependencyNoticeMessage: String?
+    /// Dependent task waiting for a prerequisite to be picked in kanban/list linking mode.
+    @Published var dependencyLinkingSourceTaskID: UUID?
 
     let appUndoManager = UndoManager()
 
@@ -364,11 +373,14 @@ final class TurboTaskStore: ObservableObject {
     private var lastArchivedPurgeAt: Date?
     private var cachedTaskContexts: [TaskContext] = []
     private var cachedProjectContexts: [ProjectContext] = []
+    private var cachedOperationContexts: [OperationContext] = []
     private var cachedTasksByID: [UUID: TaskContext] = [:]
     private var cachedProjectsByID: [UUID: ProjectContext] = [:]
+    private var cachedOperationsByID: [UUID: OperationContext] = [:]
     private var cachedJobsByID: [UUID: Job] = [:]
     private var cachedTaskContextsByScope: [TaskScopeKey: [TaskContext]] = [:]
     private var cachedProjectContextsByJobID: [UUID: [ProjectContext]] = [:]
+    private var cachedOperationContextsByJobID: [UUID: [OperationContext]] = [:]
     private var cachedJobIndex: [UUID: JobIndexEntry] = [:]
     private var cachedNowTasks: [TaskContext] = []
     private var cachedActiveTasks: [TaskContext] = []
@@ -535,6 +547,11 @@ final class TurboTaskStore: ObservableObject {
         return cachedProjectContexts
     }
 
+    var operationContexts: [OperationContext] {
+        ensureDerivedState()
+        return cachedOperationContexts
+    }
+
     var activeTask: TaskContext? {
         ensureDerivedState()
         return cachedActiveTasks.first
@@ -657,6 +674,8 @@ final class TurboTaskStore: ObservableObject {
             jobID
         case .project(let jobID, _):
             jobID
+        case .operation(let jobID, _):
+            jobID
         case .task(let jobID, _, _):
             jobID
         case nil:
@@ -673,6 +692,11 @@ final class TurboTaskStore: ObservableObject {
         default:
             nil
         }
+    }
+
+    var selectedOperationID: UUID? {
+        if case .operation(_, let operationID) = selection { return operationID }
+        return selectedTaskContext?.operationID
     }
 
     var selectedTaskID: UUID? {
@@ -694,6 +718,12 @@ final class TurboTaskStore: ObservableObject {
         return cachedProjectsByID[selectedProjectID]
     }
 
+    var selectedOperationContext: OperationContext? {
+        guard let selectedOperationID else { return nil }
+        ensureDerivedState()
+        return cachedOperationsByID[selectedOperationID]
+    }
+
     var selectedTaskContext: TaskContext? {
         guard let selectedTaskID else { return nil }
         return taskContext(taskID: selectedTaskID)
@@ -702,6 +732,12 @@ final class TurboTaskStore: ObservableObject {
     func projectContext(jobID: UUID, projectID: UUID) -> ProjectContext? {
         ensureDerivedState()
         guard let context = cachedProjectsByID[projectID], context.jobID == jobID else { return nil }
+        return context
+    }
+
+    func operationContext(jobID: UUID, operationID: UUID) -> OperationContext? {
+        ensureDerivedState()
+        guard let context = cachedOperationsByID[operationID], context.jobID == jobID else { return nil }
         return context
     }
 
@@ -723,6 +759,12 @@ final class TurboTaskStore: ObservableObject {
         return raw.filter { !$0.task.isArchived }
     }
 
+    func taskContexts(jobID: UUID, operationID: UUID) -> [TaskContext] {
+        ensureDerivedState()
+        let raw = cachedTaskContextsByScope[TaskScopeKey(jobID: jobID, projectID: nil, operationID: operationID)] ?? []
+        return raw.filter { !$0.task.isArchived }
+    }
+
     func jobLevelTaskContexts(jobID: UUID) -> [TaskContext] {
         ensureDerivedState()
         let raw = cachedTaskContextsByScope[TaskScopeKey(jobID: jobID, projectID: nil)] ?? []
@@ -734,9 +776,19 @@ final class TurboTaskStore: ObservableObject {
         return cachedProjectContextsByJobID[jobID] ?? []
     }
 
+    func operationContexts(jobID: UUID) -> [OperationContext] {
+        ensureDerivedState()
+        return cachedOperationContextsByJobID[jobID] ?? []
+    }
+
     func projectCount(jobID: UUID) -> Int {
         ensureDerivedState()
         return cachedJobIndex[jobID]?.projectCount ?? 0
+    }
+
+    func operationCount(jobID: UUID) -> Int {
+        ensureDerivedState()
+        return cachedJobIndex[jobID]?.operationCount ?? 0
     }
 
     func jobOpenWorkCount(jobID: UUID) -> Int {
@@ -802,7 +854,7 @@ final class TurboTaskStore: ObservableObject {
             } else {
                 clearNowRowFlash()
             }
-        case .none, .job, .project:
+        case .none, .job, .project, .operation:
             clearNowRowFlash()
         }
     }
@@ -891,21 +943,27 @@ final class TurboTaskStore: ObservableObject {
         scheduleForNow: Bool = false,
         preferredStatus: TaskStatus? = nil
     ) {
-        let (preferredJobID, preferredProjectID): (UUID?, UUID?) = {
+        let (preferredJobID, preferredProjectID, preferredOperationID): (UUID?, UUID?, UUID?) = {
             switch kind {
             case .task:
                 guard let jid = selectedJobID else {
-                    return (nil, nil)
+                    return (nil, nil, nil)
+                }
+                if let oid = selectedOperationID,
+                   operationContexts.contains(where: { $0.jobID == jid && $0.operation.id == oid }) {
+                    return (jid, nil, oid)
                 }
                 if let pid = selectedProjectID,
                    projectContexts.contains(where: { $0.jobID == jid && $0.project.id == pid }) {
-                    return (jid, pid)
+                    return (jid, pid, nil)
                 }
-                return (jid, nil)
+                return (jid, nil, nil)
             case .project:
-                return (selectedJobID, nil)
+                return (selectedJobID, nil, nil)
+            case .operation:
+                return (selectedJobID, nil, nil)
             case .job:
-                return (nil, nil)
+                return (nil, nil, nil)
             }
         }()
 
@@ -914,6 +972,7 @@ final class TurboTaskStore: ObservableObject {
                 kind: kind,
                 preferredJobID: preferredJobID,
                 preferredProjectID: preferredProjectID,
+                preferredOperationID: preferredOperationID,
                 preferredStatus: preferredStatus,
                 scheduleForNow: scheduleForNow
             )
@@ -1006,6 +1065,70 @@ final class TurboTaskStore: ObservableObject {
         registerUndoAddProject(projectID: project.id, jobID: jobID)
     }
 
+    func addOperation(title: String, summary: String, jobID: UUID) {
+        guard let jobIndex = jobs.firstIndex(where: { $0.id == jobID }) else { return }
+        let operation = Operation(title: title, summary: summary)
+        jobs[jobIndex].operations.append(operation)
+        selection = .operation(jobID: jobID, operationID: operation.id)
+        persist()
+    }
+
+    func updateOperation(jobID: UUID, operationID: UUID, mutate: (inout Operation) -> Void) {
+        guard let location = operationLocation(jobID: jobID, operationID: operationID) else { return }
+        mutate(&jobs[location.jobIndex].operations[location.operationIndex])
+        persist()
+    }
+
+    func setOperationArchived(jobID: UUID, operationID: UUID, archived: Bool) {
+        guard let location = operationLocation(jobID: jobID, operationID: operationID) else { return }
+        let now = Date.now
+        if archived {
+            let newlyArchived = jobs[location.jobIndex].operations[location.operationIndex].tasks
+                .filter { !$0.isArchived }.map(\.id)
+            jobs[location.jobIndex].operations[location.operationIndex].cascadeArchivedTaskIDs = newlyArchived
+            jobs[location.jobIndex].operations[location.operationIndex].isArchived = true
+            jobs[location.jobIndex].operations[location.operationIndex].archivedAt = now
+            for index in jobs[location.jobIndex].operations[location.operationIndex].tasks.indices
+                where newlyArchived.contains(jobs[location.jobIndex].operations[location.operationIndex].tasks[index].id) {
+                jobs[location.jobIndex].operations[location.operationIndex].tasks[index].isArchived = true
+                jobs[location.jobIndex].operations[location.operationIndex].tasks[index].archivedAt = now
+                jobs[location.jobIndex].operations[location.operationIndex].tasks[index].isScheduledNow = false
+            }
+        } else {
+            let restoreIDs = Set(jobs[location.jobIndex].operations[location.operationIndex].cascadeArchivedTaskIDs)
+            jobs[location.jobIndex].operations[location.operationIndex].isArchived = false
+            jobs[location.jobIndex].operations[location.operationIndex].archivedAt = nil
+            jobs[location.jobIndex].operations[location.operationIndex].cascadeArchivedTaskIDs = []
+            for index in jobs[location.jobIndex].operations[location.operationIndex].tasks.indices
+                where restoreIDs.contains(jobs[location.jobIndex].operations[location.operationIndex].tasks[index].id) {
+                jobs[location.jobIndex].operations[location.operationIndex].tasks[index].isArchived = false
+                jobs[location.jobIndex].operations[location.operationIndex].tasks[index].archivedAt = nil
+            }
+        }
+        derivedStateIsDirty = true
+        persist()
+    }
+
+    func deleteOperation(jobID: UUID, operationID: UUID) {
+        guard let location = operationLocation(jobID: jobID, operationID: operationID) else { return }
+        let taskIDs = Set(jobs[location.jobIndex].operations[location.operationIndex].tasks.map(\.id))
+        jobs[location.jobIndex].operations.remove(at: location.operationIndex)
+        history.removeAll { $0.taskID.map(taskIDs.contains) ?? false }
+        if selectedOperationID == operationID { selection = .job(jobID) }
+        persist()
+    }
+
+    func openNewOperation(preferredJobID: UUID?) {
+        presentComposer(ComposerContext(
+            kind: .operation,
+            preferredJobID: preferredJobID,
+            preferredProjectID: nil,
+            preferredOperationID: nil,
+            preferredStatus: nil,
+            scheduleForNow: false
+        ))
+    }
+
     private func registerUndoAddProject(projectID: UUID, jobID: UUID) {
 
         appUndoManager.registerUndo(withTarget: self) { [weak self] _ in
@@ -1042,6 +1165,7 @@ final class TurboTaskStore: ObservableObject {
         toolBundleIDs: [String] = [],
         jobID: UUID?,
         projectID: UUID?,
+        operationID: UUID? = nil,
         startDate: Date? = nil,
         endDate: Date? = nil
     ) {
@@ -1071,7 +1195,10 @@ final class TurboTaskStore: ObservableObject {
 
         if let jobID {
             guard let jobIndex = jobs.firstIndex(where: { $0.id == jobID }) else { return }
-            if let projectID {
+            if let operationID {
+                guard let operationIndex = jobs[jobIndex].operations.firstIndex(where: { $0.id == operationID }) else { return }
+                jobs[jobIndex].operations[operationIndex].tasks.append(task)
+            } else if let projectID {
                 guard let projectIndex = jobs[jobIndex].projects.firstIndex(where: { $0.id == projectID }) else { return }
                 jobs[jobIndex].projects[projectIndex].tasks.append(task)
             } else {
@@ -1137,6 +1264,7 @@ final class TurboTaskStore: ObservableObject {
             context: context,
             destinationJobID: context.jobID,
             destinationProjectID: context.projectID,
+            destinationOperationID: context.operationID,
             mutate: mutate
         )
     }
@@ -1146,15 +1274,20 @@ final class TurboTaskStore: ObservableObject {
         context: TaskContext,
         destinationJobID: UUID?,
         destinationProjectID: UUID?,
+        destinationOperationID: UUID? = nil,
         mutate: (inout Task) -> Void
     ) -> Bool {
-        let normalizedProjectID = destinationJobID == nil ? nil : destinationProjectID
-        let destinationChanged = context.jobID != destinationJobID || context.projectID != normalizedProjectID
+        let normalizedOperationID = destinationJobID == nil ? nil : destinationOperationID
+        let normalizedProjectID = normalizedOperationID == nil && destinationJobID != nil ? destinationProjectID : nil
+        let destinationChanged = context.jobID != destinationJobID
+            || context.projectID != normalizedProjectID
+            || context.operationID != normalizedOperationID
 
         let snapshotBefore = context.task
         let nowOrdersBefore = captureNowOrdersForUndo()
         let sourceJobID = context.jobID
         let sourceProjectID = context.projectID
+        let sourceOperationID = context.operationID
 
         if destinationChanged {
             guard let location = taskStorageLocation(taskID: context.task.id) else { return false }
@@ -1162,8 +1295,8 @@ final class TurboTaskStore: ObservableObject {
             var task = removeTask(at: location)
             mutate(&task)
 
-            guard insertTask(task, jobID: destinationJobID, projectID: normalizedProjectID) else {
-                _ = insertTask(task, jobID: context.jobID, projectID: context.projectID)
+            guard insertTask(task, jobID: destinationJobID, projectID: normalizedProjectID, operationID: normalizedOperationID) else {
+                _ = insertTask(task, jobID: context.jobID, projectID: context.projectID, operationID: context.operationID)
                 persist()
                 return false
             }
@@ -1176,6 +1309,7 @@ final class TurboTaskStore: ObservableObject {
                 nowOrdersBefore: nowOrdersBefore,
                 sourceJobID: sourceJobID,
                 sourceProjectID: sourceProjectID,
+                sourceOperationID: sourceOperationID,
                 destinationChanged: true
             )
             return true
@@ -1190,6 +1324,7 @@ final class TurboTaskStore: ObservableObject {
             nowOrdersBefore: nowOrdersBefore,
             sourceJobID: sourceJobID,
             sourceProjectID: sourceProjectID,
+            sourceOperationID: sourceOperationID,
             destinationChanged: false
         )
         return true
@@ -1201,6 +1336,7 @@ final class TurboTaskStore: ObservableObject {
         nowOrdersBefore: [UUID: Double],
         sourceJobID: UUID?,
         sourceProjectID: UUID?,
+        sourceOperationID: UUID?,
         destinationChanged: Bool
     ) {
 
@@ -1211,12 +1347,13 @@ final class TurboTaskStore: ObservableObject {
                 let redoOrders = self.captureNowOrdersForUndo()
                 let redoJobID = ctx.jobID
                 let redoProjectID = ctx.projectID
+                let redoOperationID = ctx.operationID
 
                 if destinationChanged {
                     guard let loc = self.taskStorageLocation(taskID: taskID) else { return }
                     var task = self.removeTask(at: loc)
                     task.applyFullState(from: snapshotBefore)
-                    _ = self.insertTask(task, jobID: sourceJobID, projectID: sourceProjectID)
+                    _ = self.insertTask(task, jobID: sourceJobID, projectID: sourceProjectID, operationID: sourceOperationID)
                     self.selection = .task(jobID: sourceJobID, projectID: sourceProjectID, taskID: taskID)
                 } else {
                     self.restoreTaskSnapshot(snapshotBefore)
@@ -1232,6 +1369,7 @@ final class TurboTaskStore: ObservableObject {
                     nowOrdersBefore: redoOrders,
                     sourceJobID: redoJobID,
                     sourceProjectID: redoProjectID,
+                    sourceOperationID: redoOperationID,
                     destinationChanged: destinationChanged
                 )
             }
@@ -1248,6 +1386,7 @@ final class TurboTaskStore: ObservableObject {
         var task: Task
         var jobID: UUID?
         var projectID: UUID?
+        var operationID: UUID?
         var historyEvents: [ActivityEvent]
         var restoreSelection: Bool
     }
@@ -1272,6 +1411,10 @@ final class TurboTaskStore: ObservableObject {
                       let pidx = jobs[jidx].projects.firstIndex(where: { $0.id == pid }),
                       let tidx = jobs[jidx].projects[pidx].tasks.firstIndex(where: { $0.id == tid }) {
                 jobs[jidx].projects[pidx].tasks.remove(at: tidx)
+            } else if let oid = payload.operationID,
+                      let oidx = jobs[jidx].operations.firstIndex(where: { $0.id == oid }),
+                      let tidx = jobs[jidx].operations[oidx].tasks.firstIndex(where: { $0.id == tid }) {
+                jobs[jidx].operations[oidx].tasks.remove(at: tidx)
             } else {
                 return
             }
@@ -1299,6 +1442,7 @@ final class TurboTaskStore: ObservableObject {
             task: context.task,
             jobID: context.jobID,
             projectID: context.projectID,
+            operationID: context.operationID,
             historyEvents: historyEvents,
             restoreSelection: restoreSelection
         )
@@ -1315,7 +1459,7 @@ final class TurboTaskStore: ObservableObject {
     }
 
     private func restoreDeletedTask(_ payload: DeleteTaskUndoPayload) {
-        _ = insertTask(payload.task, jobID: payload.jobID, projectID: payload.projectID)
+        _ = insertTask(payload.task, jobID: payload.jobID, projectID: payload.projectID, operationID: payload.operationID)
         if !payload.historyEvents.isEmpty {
             history.append(contentsOf: payload.historyEvents)
             history.sort { $0.timestamp > $1.timestamp }
@@ -1380,6 +1524,13 @@ final class TurboTaskStore: ObservableObject {
         derivedStateIsDirty = true
         persist()
         registerUndoProjectReorder(jobID: jobID, savedProjects: savedProjects)
+    }
+
+    func moveOperations(jobID: UUID, fromOffsets source: IndexSet, toOffset destination: Int) {
+        guard let jobIndex = jobs.firstIndex(where: { $0.id == jobID }) else { return }
+        jobs[jobIndex].operations.move(fromOffsets: source, toOffset: destination)
+        derivedStateIsDirty = true
+        persist()
     }
 
     private func registerUndoProjectReorder(jobID: UUID, savedProjects: [Project]) {
@@ -1559,7 +1710,9 @@ final class TurboTaskStore: ObservableObject {
 
         let job = jobs[jobIndex]
         let taskIDs = Set(
-            job.jobTasks.map(\.id) + job.projects.flatMap(\.tasks).map(\.id)
+            job.jobTasks.map(\.id)
+                + job.projects.flatMap(\.tasks).map(\.id)
+                + job.operations.flatMap(\.tasks).map(\.id)
         )
         let removedHistory = history.filter { event in
             guard let tid = event.taskID else { return false }
@@ -1605,7 +1758,11 @@ final class TurboTaskStore: ObservableObject {
 
         guard let jobIndex = jobs.firstIndex(where: { $0.id == jobID }) else { return }
         let job = jobs[jobIndex]
-        let taskIDs = Set(job.jobTasks.map(\.id) + job.projects.flatMap(\.tasks).map(\.id))
+        let taskIDs = Set(
+            job.jobTasks.map(\.id)
+                + job.projects.flatMap(\.tasks).map(\.id)
+                + job.operations.flatMap(\.tasks).map(\.id)
+        )
         let removedHistory = history.filter { event in
             guard let tid = event.taskID else { return false }
             return taskIDs.contains(tid)
@@ -2149,6 +2306,44 @@ final class TurboTaskStore: ObservableObject {
     }
 
     // MARK: - Task dependencies
+
+    var isDependencyLinkingActive: Bool {
+        dependencyLinkingSourceTaskID != nil
+    }
+
+    func beginDependencyLinking(for dependentTaskID: UUID) {
+        guard taskContext(taskID: dependentTaskID) != nil else { return }
+        dependencyLinkingSourceTaskID = dependentTaskID
+    }
+
+    func cancelDependencyLinking() {
+        dependencyLinkingSourceTaskID = nil
+    }
+
+    func linkingRole(for taskID: UUID) -> DependencyLinkingRole {
+        guard let dependentID = dependencyLinkingSourceTaskID else { return .inactive }
+        if taskID == dependentID { return .source }
+        if canLinkPrerequisite(taskID, to: dependentID) { return .validTarget }
+        return .invalidTarget
+    }
+
+    func canLinkPrerequisite(_ prerequisiteID: UUID, to dependentID: UUID) -> Bool {
+        guard prerequisiteID != dependentID,
+              let dependent = taskContext(taskID: dependentID),
+              !dependent.task.isArchived,
+              let prerequisite = taskContext(taskID: prerequisiteID),
+              !prerequisite.task.isArchived,
+              !dependent.task.blockedByTaskIDs.contains(prerequisiteID) else { return false }
+        return !wouldCreateDependencyCycle(prerequisiteID: prerequisiteID, dependentID: dependentID)
+    }
+
+    @discardableResult
+    func completeDependencyLinking(prerequisiteID: UUID) -> Bool {
+        guard let dependentID = dependencyLinkingSourceTaskID else { return false }
+        let linked = addTaskDependency(prerequisiteID: prerequisiteID, dependentID: dependentID)
+        dependencyLinkingSourceTaskID = nil
+        return linked
+    }
 
     func pendingBlockers(for task: Task) -> [TaskContext] {
         task.blockedByTaskIDs.compactMap { taskContext(taskID: $0) }
@@ -2773,6 +2968,7 @@ final class TurboTaskStore: ObservableObject {
                 context.task.title.lowercased().contains(search)
                 || context.task.summary.lowercased().contains(search)
                 || context.projectTitle.lowercased().contains(search)
+                || context.operationTitle.lowercased().contains(search)
                 || context.jobTitle.lowercased().contains(search)
             if !matchesSearch { return false }
         }
@@ -2800,8 +2996,8 @@ final class TurboTaskStore: ObservableObject {
             if lhs.task.status.rawValue != rhs.task.status.rawValue { return lhs.task.status.rawValue < rhs.task.status.rawValue }
             return lhs.task.title.localizedCaseInsensitiveCompare(rhs.task.title) == .orderedAscending
         case .project:
-            let lt = lhs.projectTitle.isEmpty ? lhs.jobTitle : lhs.projectTitle
-            let rt = rhs.projectTitle.isEmpty ? rhs.jobTitle : rhs.projectTitle
+            let lt = lhs.containerTitle.isEmpty ? lhs.jobTitle : lhs.containerTitle
+            let rt = rhs.containerTitle.isEmpty ? rhs.jobTitle : rhs.containerTitle
             if lt != rt { return lt.localizedCaseInsensitiveCompare(rt) == .orderedAscending }
             return lhs.task.title.localizedCaseInsensitiveCompare(rhs.task.title) == .orderedAscending
         }
@@ -2923,6 +3119,8 @@ final class TurboTaskStore: ObservableObject {
                 taskID: context.task.id,
                 taskTitle: context.task.title,
                 projectTitle: context.projectTitle,
+                containerKind: context.operationID == nil ? (context.projectID == nil ? nil : .project) : .operation,
+                containerTitle: context.containerTitle,
                 detail: detail,
                 focusRating: focusRating,
                 qualityRating: qualityRating,
@@ -2936,6 +3134,12 @@ final class TurboTaskStore: ObservableObject {
         guard let jobIndex = jobs.firstIndex(where: { $0.id == jobID }) else { return nil }
         guard let projectIndex = jobs[jobIndex].projects.firstIndex(where: { $0.id == projectID }) else { return nil }
         return (jobIndex, projectIndex)
+    }
+
+    private func operationLocation(jobID: UUID, operationID: UUID) -> (jobIndex: Int, operationIndex: Int)? {
+        guard let jobIndex = jobs.firstIndex(where: { $0.id == jobID }) else { return nil }
+        guard let operationIndex = jobs[jobIndex].operations.firstIndex(where: { $0.id == operationID }) else { return nil }
+        return (jobIndex, operationIndex)
     }
 
     private func taskStorageLocation(taskID: UUID) -> TaskStorageLocation? {
@@ -2953,20 +3157,30 @@ final class TurboTaskStore: ObservableObject {
                     return .project(jobIndex: jobIndex, projectIndex: projectIndex, taskIndex: taskIndex)
                 }
             }
+            for operationIndex in jobs[jobIndex].operations.indices {
+                if let taskIndex = jobs[jobIndex].operations[operationIndex].tasks.firstIndex(where: { $0.id == taskID }) {
+                    return .operation(jobIndex: jobIndex, operationIndex: operationIndex, taskIndex: taskIndex)
+                }
+            }
         }
 
         return nil
     }
 
     @discardableResult
-    private func insertTask(_ task: Task, jobID: UUID?, projectID: UUID?) -> Bool {
+    private func insertTask(_ task: Task, jobID: UUID?, projectID: UUID?, operationID: UUID? = nil) -> Bool {
         suppressDidSetPersistence = true
         defer { suppressDidSetPersistence = false }
 
         if let jobID {
             guard let jobIndex = jobs.firstIndex(where: { $0.id == jobID }) else { return false }
 
-            if let projectID {
+            if let operationID {
+                guard let operationIndex = jobs[jobIndex].operations.firstIndex(where: { $0.id == operationID }) else {
+                    return false
+                }
+                jobs[jobIndex].operations[operationIndex].tasks.append(task)
+            } else if let projectID {
                 guard let projectIndex = jobs[jobIndex].projects.firstIndex(where: { $0.id == projectID }) else {
                     return false
                 }
@@ -2995,6 +3209,8 @@ final class TurboTaskStore: ObservableObject {
             task = jobs[jobIndex].jobTasks.remove(at: taskIndex)
         case .project(let jobIndex, let projectIndex, let taskIndex):
             task = jobs[jobIndex].projects[projectIndex].tasks.remove(at: taskIndex)
+        case .operation(let jobIndex, let operationIndex, let taskIndex):
+            task = jobs[jobIndex].operations[operationIndex].tasks.remove(at: taskIndex)
         }
 
         derivedStateIsDirty = true
@@ -3023,6 +3239,13 @@ final class TurboTaskStore: ObservableObject {
                     return
                 }
             }
+            for operationIndex in jobs[jobIndex].operations.indices {
+                if let taskIndex = jobs[jobIndex].operations[operationIndex].tasks.firstIndex(where: { $0.id == taskID }) {
+                    mutate(&jobs[jobIndex].operations[operationIndex].tasks[taskIndex])
+                    derivedStateIsDirty = true
+                    return
+                }
+            }
         }
     }
 
@@ -3035,6 +3258,8 @@ final class TurboTaskStore: ObservableObject {
         cachedJobsByID = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0) })
         cachedProjectsByID = [:]
         cachedProjectContextsByJobID = [:]
+        cachedOperationsByID = [:]
+        cachedOperationContextsByJobID = [:]
         cachedJobIndex = [:]
 
         cachedProjectContexts = jobs.flatMap { job in
@@ -3058,21 +3283,35 @@ final class TurboTaskStore: ObservableObject {
                 job.jobTasks.map(\.title).joined(separator: " "),
                 job.projects.map(\.title).joined(separator: " "),
                 job.projects.map(\.outcome).joined(separator: " "),
-                job.projects.flatMap(\.tasks).map(\.title).joined(separator: " ")
+                job.projects.flatMap(\.tasks).map(\.title).joined(separator: " "),
+                job.operations.map(\.title).joined(separator: " "),
+                job.operations.map(\.summary).joined(separator: " "),
+                job.operations.flatMap(\.tasks).map(\.title).joined(separator: " ")
             ]
             .joined(separator: " ")
             .lowercased()
 
             let openWorkCount = job.jobTasks.filter { !$0.isArchived && $0.status != .done }.count
                 + job.projects.flatMap(\.tasks).filter { !$0.isArchived && $0.status != .done }.count
+                + job.operations.flatMap(\.tasks).filter { !$0.isArchived && $0.status != .done }.count
 
             cachedJobIndex[job.id] = JobIndexEntry(
                 searchText: searchText,
                 openWorkCount: openWorkCount,
-                projectCount: job.projects.count
+                projectCount: job.projects.count,
+                operationCount: job.operations.filter { !$0.isArchived }.count
             )
 
             return projectContexts
+        }
+
+        cachedOperationContexts = jobs.flatMap { job in
+            let contexts = job.operations.map {
+                OperationContext(jobID: job.id, jobTitle: job.title, jobPalette: job.palette, operation: $0)
+            }
+            cachedOperationContextsByJobID[job.id] = contexts
+            for context in contexts { cachedOperationsByID[context.operation.id] = context }
+            return contexts
         }
 
         var taskContexts: [TaskContext] = standaloneTasks.map { task in
@@ -3089,7 +3328,9 @@ final class TurboTaskStore: ObservableObject {
         taskContexts.reserveCapacity(
             standaloneTasks.count
                 + jobs.reduce(0) { total, job in
-                    total + job.jobTasks.count + job.projects.reduce(0) { $0 + $1.tasks.count }
+                    total + job.jobTasks.count
+                        + job.projects.reduce(0) { $0 + $1.tasks.count }
+                        + job.operations.reduce(0) { $0 + $1.tasks.count }
                 }
         )
 
@@ -3117,6 +3358,21 @@ final class TurboTaskStore: ObservableObject {
                     )
                 })
             }
+
+            for operation in job.operations {
+                taskContexts.append(contentsOf: operation.tasks.map { task in
+                    TaskContext(
+                        jobID: job.id,
+                        projectID: nil,
+                        operationID: operation.id,
+                        jobTitle: job.title,
+                        projectTitle: "",
+                        operationTitle: operation.title,
+                        jobPalette: job.palette,
+                        task: task
+                    )
+                })
+            }
         }
 
         cachedTaskContexts = taskContexts
@@ -3124,7 +3380,7 @@ final class TurboTaskStore: ObservableObject {
 
         var groupedContexts: [TaskScopeKey: [TaskContext]] = [:]
         for context in taskContexts where context.jobID != nil {
-            let key = TaskScopeKey(jobID: context.jobID, projectID: context.projectID)
+            let key = TaskScopeKey(jobID: context.jobID, projectID: context.projectID, operationID: context.operationID)
             groupedContexts[key, default: []].append(context)
         }
         cachedTaskContextsByScope = groupedContexts
