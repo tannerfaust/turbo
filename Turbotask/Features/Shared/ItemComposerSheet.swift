@@ -23,6 +23,8 @@ struct ItemComposerSheet: View {
     @State private var projectTitle = ""
     @State private var projectOutcome = ""
     @State private var projectEmoji = ""
+    @State private var operationTitle = ""
+    @State private var operationSummary = ""
 
     init(context: TurboTaskStore.ComposerContext) {
         self.context = context
@@ -36,6 +38,7 @@ struct ItemComposerSheet: View {
                 TaskComposerView(
                     preferredJobID: context.preferredJobID,
                     preferredProjectID: context.preferredProjectID,
+                    preferredOperationID: context.preferredOperationID,
                     preferredStatus: context.preferredStatus,
                     scheduleForNow: context.scheduleForNow
                 )
@@ -43,9 +46,53 @@ struct ItemComposerSheet: View {
                 jobComposer
             case .project:
                 projectComposer
+            case .operation:
+                operationComposer
             }
         }
         .environmentObject(store)
+    }
+
+    @ViewBuilder
+    private var operationComposer: some View {
+        if store.jobs.isEmpty {
+            ComposerChrome(
+                breadcrumb: "New operation",
+                onClose: { store.clearComposer() },
+                content: { prerequisiteMessage },
+                footerLeading: { Color.clear.frame(width: 28, height: 28) },
+                createMore: .constant(false),
+                createTitle: "Create operation",
+                canCreate: false,
+                onCreate: {}
+            )
+        } else {
+            ComposerChrome(
+                breadcrumb: selectedJobID.flatMap { id in store.jobs.first(where: { $0.id == id })?.title }
+                    .map { "\($0) › New operation" } ?? "New operation",
+                onClose: { store.clearComposer() },
+                content: {
+                    VStack(alignment: .leading, spacing: 14) {
+                        TextField("Operation name", text: $operationTitle)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 22, weight: .semibold))
+                            .focused($titleFocused)
+                        TextField("What ongoing responsibility does this cover?", text: $operationSummary, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 14))
+                            .lineLimit(2...5)
+                        fieldPickerPill
+                    }
+                    .padding(20)
+                },
+                footerLeading: { Color.clear.frame(width: 28, height: 28) },
+                createMore: $createMore,
+                createTitle: "Create operation",
+                canCreate: selectedJobID != nil && !operationTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                onCreate: saveOperation
+            )
+            .onAppear { DispatchQueue.main.async { titleFocused = true } }
+        }
     }
 
     // MARK: - Field composer
@@ -284,6 +331,24 @@ struct ItemComposerSheet: View {
         if createMore {
             projectTitle = ""
             projectOutcome = ""
+            titleFocused = true
+        } else {
+            store.clearComposer()
+        }
+    }
+
+    private func saveOperation() {
+        guard let selectedJobID else { return }
+        let title = operationTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        store.addOperation(
+            title: title,
+            summary: operationSummary.trimmingCharacters(in: .whitespacesAndNewlines),
+            jobID: selectedJobID
+        )
+        if createMore {
+            operationTitle = ""
+            operationSummary = ""
             titleFocused = true
         } else {
             store.clearComposer()

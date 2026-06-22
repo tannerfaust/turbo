@@ -58,25 +58,23 @@ struct AppShellView: View {
                     }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
                     .trainingWheelsTooltip("⌘⇧P")
+                    Button("New Operation") {
+                        store.openComposer(.operation)
+                    }
                     Button("New Task") {
                         store.openComposer(.task)
                     }
                     .keyboardShortcut("t", modifiers: .command)
                     .trainingWheelsTooltip("⌘T")
-                    Button("Toggle quick add on Now") {
-                        store.performNowShortcut(.focusQuickAdd)
+                    Button("New Task on Now") {
+                        store.performNowShortcut(.openTaskComposer)
                     }
                     .keyboardShortcut("n", modifiers: .command)
                     .trainingWheelsTooltip("⌘N")
-                    Button("New Task on Now (form)") {
-                        store.openComposer(.task, scheduleForNow: true)
-                    }
-                    .keyboardShortcut("n", modifiers: [.command, .shift])
-                    .trainingWheelsTooltip("⌘⇧N")
                 } label: {
                     Label("New", systemImage: "plus.circle")
                 }
-                .trainingWheelsTooltip("Create field, project, task, or jump to quick add")
+                .trainingWheelsTooltip("Create field, project, or task")
 
                 Button {
                     store.toggleOverlay()
@@ -162,7 +160,7 @@ struct AppShellView: View {
                 case .now:
                     NowView()
                 case .projects:
-                    ProjectsView()
+                    WorkView()
                 case .tasks:
                     TasksView()
                 case .jobs:

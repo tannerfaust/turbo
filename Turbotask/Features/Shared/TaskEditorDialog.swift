@@ -28,6 +28,7 @@ struct TaskEditorDialog: View {
     @State private var toolBundleIDs: [String]
     @State private var selectedJobID: UUID?
     @State private var selectedProjectID: UUID?
+    @State private var selectedOperationID: UUID?
     @State private var toolsPickerOpen = false
     @State private var hasStartDate: Bool
     @State private var hasEndDate: Bool
@@ -52,6 +53,7 @@ struct TaskEditorDialog: View {
         _toolBundleIDs = State(initialValue: context.task.toolBundleIDs)
         _selectedJobID = State(initialValue: context.jobID)
         _selectedProjectID = State(initialValue: context.projectID)
+        _selectedOperationID = State(initialValue: context.operationID)
         _hasStartDate = State(initialValue: context.task.startDate != nil)
         _hasEndDate = State(initialValue: context.task.endDate != nil)
         _planStart = State(initialValue: context.task.startDate ?? Date())
@@ -89,6 +91,14 @@ struct TaskEditorDialog: View {
                                 Text("None — task on field only").tag(nil as UUID?)
                                 ForEach(availableProjects) { project in
                                     Text(project.project.displayTitle).tag(Optional(project.project.id))
+                                }
+                            }
+                            .pickerStyle(.menu)
+
+                            Picker("Operation", selection: $selectedOperationID) {
+                                Text("None").tag(nil as UUID?)
+                                ForEach(availableOperations) { operation in
+                                    Text(operation.operation.title).tag(Optional(operation.operation.id))
                                 }
                             }
                             .pickerStyle(.menu)
@@ -319,6 +329,12 @@ struct TaskEditorDialog: View {
         .onChange(of: selectedJobID) {
             syncProjectSelection()
         }
+        .onChange(of: selectedProjectID) { _, value in
+            if value != nil { selectedOperationID = nil }
+        }
+        .onChange(of: selectedOperationID) { _, value in
+            if value != nil { selectedProjectID = nil }
+        }
     }
 
     private func save() {
@@ -331,12 +347,14 @@ struct TaskEditorDialog: View {
         let initialArchived = live.task.isArchived
         let destinationJobID = selectedJobID
         let destinationProjectID = selectedJobID == nil ? nil : selectedProjectID
+        let destinationOperationID = selectedJobID == nil ? nil : selectedOperationID
 
         let cal = Calendar.current
         let ok = store.updateTask(
             context: live,
             destinationJobID: destinationJobID,
-            destinationProjectID: destinationProjectID
+            destinationProjectID: destinationProjectID,
+            destinationOperationID: destinationOperationID
         ) { task in
             task.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             task.summary = ""
@@ -437,6 +455,11 @@ struct TaskEditorDialog: View {
         return store.projectContexts(jobID: selectedJobID)
     }
 
+    private var availableOperations: [OperationContext] {
+        guard let selectedJobID else { return [] }
+        return store.operationContexts(jobID: selectedJobID).filter { !$0.operation.isArchived }
+    }
+
     private var locationSummary: String {
         if let selectedJobID,
            let job = store.jobs.first(where: { $0.id == selectedJobID }) {
@@ -444,7 +467,11 @@ struct TaskEditorDialog: View {
                let project = availableProjects.first(where: { $0.project.id == selectedProjectID }) {
                 return "\(job.title) / \(project.project.displayTitle)"
             }
-            return "\(job.title) / No project"
+            if let selectedOperationID,
+               let operation = availableOperations.first(where: { $0.operation.id == selectedOperationID }) {
+                return "\(job.title) / \(operation.operation.title)"
+            }
+            return "\(job.title) / Field"
         }
 
         return "Inbox"
@@ -453,6 +480,7 @@ struct TaskEditorDialog: View {
     private func syncProjectSelection() {
         guard let selectedJobID else {
             selectedProjectID = nil
+            selectedOperationID = nil
             return
         }
 
@@ -460,10 +488,15 @@ struct TaskEditorDialog: View {
            !availableProjects.contains(where: { $0.project.id == selectedProjectID }) {
             self.selectedProjectID = nil
         }
+        if let selectedOperationID,
+           !availableOperations.contains(where: { $0.operation.id == selectedOperationID }) {
+            self.selectedOperationID = nil
+        }
 
         if !store.jobs.contains(where: { $0.id == selectedJobID }) {
             self.selectedJobID = nil
             self.selectedProjectID = nil
+            self.selectedOperationID = nil
         }
     }
 }

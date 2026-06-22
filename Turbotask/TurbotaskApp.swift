@@ -62,8 +62,8 @@ struct TurbotaskApp: App {
 
                 Divider()
 
-                Button("Toggle quick add on Now…") {
-                    store.performNowShortcut(.focusQuickAdd)
+                Button("New Task on Now…") {
+                    store.performNowShortcut(.openTaskComposer)
                 }
                 .keyboardShortcut("n", modifiers: .command)
 
@@ -71,11 +71,6 @@ struct TurbotaskApp: App {
                     store.openComposer(.task)
                 }
                 .keyboardShortcut("t", modifiers: .command)
-
-                Button("New Task on Now (form)…") {
-                    store.openComposer(.task, scheduleForNow: true)
-                }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
 
                 Button("New Project…") {
                     store.openComposer(.project)
@@ -133,8 +128,8 @@ struct TurbotaskApp: App {
             }
 
             CommandMenu("Now") {
-                Button("Toggle Quick Add") {
-                    store.performNowShortcut(.focusQuickAdd)
+                Button("New Task on Now…") {
+                    store.performNowShortcut(.openTaskComposer)
                 }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
 

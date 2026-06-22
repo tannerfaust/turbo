@@ -12,6 +12,8 @@ import SwiftUI
 struct ComposerChrome<Content: View, FooterLeading: View>: View {
     let breadcrumb: String
     let onClose: () -> Void
+    var size = CGSize(width: 600, height: 500)
+    var headerAccessory: AnyView? = nil
   @ViewBuilder let content: () -> Content
   @ViewBuilder let footerLeading: () -> FooterLeading
     let createMore: Binding<Bool>
@@ -28,16 +30,12 @@ struct ComposerChrome<Content: View, FooterLeading: View>: View {
             Divider().opacity(0.65)
             footer
         }
-        .frame(width: 600, height: 500)
+        .frame(width: size.width, height: size.height)
         .background(TurboTheme.backgroundRaised)
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: "bolt.circle.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(TurboTheme.ink)
-
             HStack(spacing: 6) {
                 Text(breadcrumb)
                     .font(.system(size: 13, weight: .medium))
@@ -46,6 +44,10 @@ struct ComposerChrome<Content: View, FooterLeading: View>: View {
             }
 
             Spacer(minLength: 8)
+
+            if let headerAccessory {
+                headerAccessory
+            }
 
             Button(action: onClose) {
                 Image(systemName: "xmark")
@@ -97,6 +99,7 @@ struct ComposerCapturePill<MenuContent: View>: View {
     var iconColor: Color = TurboTheme.mutedInk
     let title: String
     var isActive: Bool = false
+    var helpText: String = ""
     @ViewBuilder let menu: () -> MenuContent
 
     var body: some View {
@@ -106,29 +109,35 @@ struct ComposerCapturePill<MenuContent: View>: View {
             pillLabel
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .fixedSize()
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(
+            Capsule()
+                .fill(TurboTheme.nestedCardFill)
+        )
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(TurboTheme.cardStroke.opacity(0.85), lineWidth: 1))
+        .help(helpText.isEmpty ? title : helpText)
     }
 
     private var pillLabel: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: icon == "circle.fill" || icon == "circle" ? 9 : 12, weight: .semibold))
                 .foregroundStyle(iconColor)
+                .frame(width: 16, height: 16)
             Text(title)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(isActive ? TurboTheme.ink : TurboTheme.mutedInk)
                 .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(TurboTheme.mutedInk.opacity(0.75))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isActive ? TurboTheme.accentSoft.opacity(0.55) : TurboTheme.nestedCardFill.opacity(0.85))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(TurboTheme.cardStroke.opacity(isActive ? 0.95 : 0.55), lineWidth: 1)
-        )
+        .contentShape(Capsule())
     }
 }
 
@@ -136,32 +145,149 @@ struct ComposerTogglePill: View {
     let icon: String
     let title: String
     var isOn: Bool
+    var helpText: String = ""
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(isOn ? TurboTheme.ink : TurboTheme.mutedInk)
+                    .frame(width: 16, height: 16)
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(isOn ? TurboTheme.ink : TurboTheme.mutedInk)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isOn ? TurboTheme.accentSoft.opacity(0.65) : TurboTheme.nestedCardFill.opacity(0.85))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(TurboTheme.cardStroke.opacity(isOn ? 0.95 : 0.55), lineWidth: 1)
-            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .fixedSize()
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(
+            Capsule()
+                .fill(TurboTheme.nestedCardFill)
+        )
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(TurboTheme.cardStroke.opacity(0.85), lineWidth: 1))
+        .help(helpText.isEmpty ? title : helpText)
+    }
+}
+
+// MARK: - Now button (icon-only glow circle)
+
+struct ComposerNowButton: View {
+    @Binding var isOn: Bool
+    var glowColor: Color
+
+    @State private var bounceScale: CGFloat = 1.0
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+            // Brief bounce on press
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) {
+                bounceScale = 1.18
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    bounceScale = 1.0
+                }
+            }
+        } label: {
+            ZStack {
+                // Main circle — solid fill when on, subtle when off
+                Circle()
+                    .fill(isOn ? glowColor.opacity(0.18) : TurboTheme.nestedCardFill)
+                    .frame(width: 28, height: 28)
+                    .overlay(
+                        Circle()
+                            .stroke(
+                                isOn ? glowColor.opacity(0.55) : TurboTheme.cardStroke.opacity(0.85),
+                                lineWidth: 1
+                            )
+                    )
+
+                // Lightning bolt icon
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(isOn ? glowColor : TurboTheme.mutedInk.opacity(0.45))
+            }
+            .frame(width: 28, height: 28)
+            .scaleEffect(bounceScale)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(isOn ? "Remove from Now · ⌥⌘B" : "Show in Now · ⌥⌘B")
+        .accessibilityLabel(isOn ? "Now active" : "Schedule for now")
+    }
+}
+
+// MARK: - Status menu (icon-only, title row)
+
+private struct ComposerStatusMenuButton: View {
+    @Binding var selection: TaskStatus
+    var accentColor: Color
+
+    @State private var showPicker = false
+
+    var body: some View {
+        Button {
+            showPicker.toggle()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(TurboTheme.nestedCardFill)
+                    .overlay(
+                        Circle()
+                            .stroke(TurboTheme.cardStroke.opacity(0.7), lineWidth: 1)
+                    )
+                TaskStatusRowIndicator(status: selection, jobColor: accentColor, diameter: 20)
+            }
+            .frame(width: 30, height: 30)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Status: \(selection.title) · click to change · ⌥⌘1–5")
+        .accessibilityLabel("Task status: \(selection.title)")
+        .accessibilityHint("Opens status menu")
+        .popover(isPresented: $showPicker, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(TaskStatus.allCases) { option in
+                    Button {
+                        selection = option
+                        showPicker = false
+                    } label: {
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(option.accent)
+                                .frame(width: 8, height: 8)
+                            Text(option.title)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(TurboTheme.ink)
+                            Spacer(minLength: 20)
+                            if selection == option {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(TurboTheme.mutedInk)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(selection == option ? TurboTheme.nestedCardFill : .clear)
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(8)
+            .frame(width: 180)
+        }
     }
 }
 
@@ -172,6 +298,7 @@ struct TaskComposerView: View {
 
     let preferredJobID: UUID?
     let preferredProjectID: UUID?
+    let preferredOperationID: UUID?
     let preferredStatus: TaskStatus?
     let scheduleForNow: Bool
 
@@ -181,6 +308,7 @@ struct TaskComposerView: View {
 
     @State private var selectedJobID: UUID?
     @State private var selectedProjectID: UUID?
+    @State private var selectedOperationID: UUID?
     @State private var title = ""
     @State private var notes = ""
     @State private var status: TaskStatus = .queued
@@ -202,15 +330,18 @@ struct TaskComposerView: View {
     init(
         preferredJobID: UUID?,
         preferredProjectID: UUID?,
+        preferredOperationID: UUID? = nil,
         preferredStatus: TaskStatus? = nil,
         scheduleForNow: Bool
     ) {
         self.preferredJobID = preferredJobID
         self.preferredProjectID = preferredProjectID
+        self.preferredOperationID = preferredOperationID
         self.preferredStatus = preferredStatus
         self.scheduleForNow = scheduleForNow
         _selectedJobID = State(initialValue: preferredJobID)
         _selectedProjectID = State(initialValue: preferredProjectID)
+        _selectedOperationID = State(initialValue: preferredOperationID)
         _status = State(initialValue: preferredStatus ?? .queued)
         _isScheduledNow = State(initialValue: scheduleForNow)
     }
@@ -219,6 +350,8 @@ struct TaskComposerView: View {
         ComposerChrome(
             breadcrumb: breadcrumb,
             onClose: { store.clearComposer() },
+            size: composerSize,
+            headerAccessory: AnyView(nowHeaderButton),
             content: { composerBody },
             footerLeading: { toolsFooterButton },
             createMore: $createMore,
@@ -240,94 +373,92 @@ struct TaskComposerView: View {
             TaskToolsPickerSheet(bundleIDs: $toolBundleIDs)
                 .environmentObject(store)
         }
+        .animation(.easeInOut(duration: 0.18), value: cadence)
     }
 
     private var composerBody: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                titleField
-                notesField
-                capturePills
-                advancedPanels
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 20)
+        VStack(alignment: .leading, spacing: 0) {
+            titleField
+            notesField
+            advancedPanels
+            capturePills
         }
-        .scrollIndicators(.hidden)
+        .padding(.horizontal, 28)
+        .padding(.top, 22)
+        .padding(.bottom, 20)
     }
 
     private var titleField: some View {
-        TextField("Task title", text: $title)
-            .textFieldStyle(.plain)
-            .font(.system(size: 22, weight: .semibold))
-            .foregroundStyle(TurboTheme.ink)
-            .focused($titleFocused)
-            .padding(.bottom, 10)
+        HStack(alignment: .center, spacing: 10) {
+            ComposerStatusMenuButton(selection: $status, accentColor: destinationAccent)
+
+            TextField("Task title", text: $title)
+                .textFieldStyle(.plain)
+                .font(.system(size: 25, weight: .semibold))
+                .foregroundStyle(TurboTheme.ink)
+                .focused($titleFocused)
+        }
     }
 
     private var notesField: some View {
-        TextField("Add notes…", text: $notes, axis: .vertical)
-            .textFieldStyle(.plain)
-            .font(.system(size: 14))
-            .foregroundStyle(TurboTheme.ink)
-            .lineLimit(2...6)
-            .focused($notesFocused)
-            .padding(.bottom, 16)
+        ZStack(alignment: .topLeading) {
+            TextEditor(text: $notes)
+                .font(.system(size: 14))
+                .foregroundStyle(TurboTheme.ink)
+                .scrollContentBackground(.hidden)
+                .background(.clear)
+                .focused($notesFocused)
+                .padding(.horizontal, -5)
+                .padding(.vertical, -8)
+
+            if notes.isEmpty {
+                Text("Add description or notes...")
+                    .font(.system(size: 14))
+                    .foregroundStyle(TurboTheme.mutedInk.opacity(0.72))
+                    .allowsHitTesting(false)
+            }
+        }
+        .padding(.top, 18)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, minHeight: 120, maxHeight: .infinity, alignment: .topLeading)
+        .layoutPriority(1)
     }
 
     private var capturePills: some View {
-        FlowLayout(spacing: 8) {
-            statusPill
-            energyPill
-            fieldPill
-            if selectedJobID != nil {
-                projectPill
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                energyPill
+                fieldPill
+                if selectedJobID != nil {
+                    projectPill
+                }
+                cadencePill
+                toolsPill
+                planPill
+                morePill
             }
-            cadencePill
-            ComposerTogglePill(
-                icon: isScheduledNow ? "pin.fill" : "pin",
-                title: isScheduledNow ? "On Now" : "Now",
-                isOn: isScheduledNow,
-                action: { isScheduledNow.toggle() }
-            )
-            toolsPill
-            planPill
-            morePill
         }
     }
 
-    private var statusPill: some View {
-        ComposerCapturePill(
-            icon: "circle.fill",
-            iconColor: status.accent,
-            title: status.title,
-            isActive: status != .queued
-        ) {
-            ForEach(TaskStatus.allCases) { option in
-                Button {
-                    status = option
-                } label: {
-                    Label {
-                        Text(option.title)
-                    } icon: {
-                        Image(systemName: "circle.fill")
-                            .foregroundStyle(option.accent)
-                    }
-                    if status == option {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
+    private var nowHeaderButton: some View {
+        ComposerNowButton(isOn: $isScheduledNow, glowColor: destinationAccent)
+    }
+
+    private var destinationAccent: Color {
+        if let selectedJobID,
+           let job = store.jobs.first(where: { $0.id == selectedJobID }) {
+            return job.palette.color
         }
+        return TurboTheme.inboxAccent
     }
 
     private var energyPill: some View {
         ComposerCapturePill(
             icon: "bolt.fill",
-            iconColor: energy.accent,
+            iconColor: destinationAccent,
             title: energy.shortTitle,
-            isActive: energy != .deepFocus
+            isActive: energy != .deepFocus,
+            helpText: "Work mode: \(energy.title)"
         ) {
             ForEach(TaskEnergy.allCases) { option in
                 Button {
@@ -346,13 +477,15 @@ struct TaskComposerView: View {
 
     private var fieldPill: some View {
         ComposerCapturePill(
-            icon: "briefcase",
+            icon: selectedJobID == nil ? "tray" : "briefcase",
             title: fieldLabel,
-            isActive: selectedJobID != nil
+            isActive: selectedJobID != nil,
+            helpText: "Field: \(fieldLabel)"
         ) {
             Button {
                 selectedJobID = nil
                 selectedProjectID = nil
+                selectedOperationID = nil
             } label: {
                 HStack {
                     Text("Inbox")
@@ -362,14 +495,57 @@ struct TaskComposerView: View {
             if !store.jobs.isEmpty {
                 Divider()
                 ForEach(store.jobs) { job in
-                    Button {
-                        selectedJobID = job.id
-                        syncProjectSelection()
-                    } label: {
-                        HStack {
-                            Text(job.title)
-                            if selectedJobID == job.id { Image(systemName: "checkmark") }
+                    Menu {
+                        Button {
+                            selectedJobID = job.id
+                            selectedProjectID = nil
+                            selectedOperationID = nil
+                        } label: {
+                            HStack {
+                                Text("Field only")
+                                if selectedJobID == job.id && selectedProjectID == nil && selectedOperationID == nil {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
                         }
+
+                        let projects = store.projectContexts.filter { $0.jobID == job.id }
+                        if !projects.isEmpty {
+                            Divider()
+                            Text("Projects")
+                            ForEach(projects) { context in
+                                Button {
+                                    selectedJobID = job.id
+                                    selectedProjectID = context.project.id
+                                    selectedOperationID = nil
+                                } label: {
+                                    HStack {
+                                        Text(context.project.displayTitle)
+                                        if selectedProjectID == context.project.id { Image(systemName: "checkmark") }
+                                    }
+                                }
+                            }
+                        }
+
+                        let operations = store.operationContexts(jobID: job.id).filter { !$0.operation.isArchived }
+                        if !operations.isEmpty {
+                            Divider()
+                            Text("Operations")
+                            ForEach(operations) { context in
+                                Button {
+                                    selectedJobID = job.id
+                                    selectedOperationID = context.operation.id
+                                    selectedProjectID = nil
+                                } label: {
+                                    HStack {
+                                        Text(context.operation.title)
+                                        if selectedOperationID == context.operation.id { Image(systemName: "checkmark") }
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        Label(job.title, systemImage: "briefcase")
                     }
                 }
             }
@@ -378,23 +554,27 @@ struct TaskComposerView: View {
 
     private var projectPill: some View {
         ComposerCapturePill(
-            icon: "square.stack.3d.up",
+            icon: selectedOperationID != nil ? "arrow.triangle.2.circlepath" : "square.stack.3d.up",
             title: projectLabel,
-            isActive: selectedProjectID != nil
+            isActive: selectedProjectID != nil || selectedOperationID != nil,
+            helpText: "Placement: \(projectLabel)"
         ) {
             Button {
                 selectedProjectID = nil
+                selectedOperationID = nil
             } label: {
                 HStack {
-                    Text("No project")
-                    if selectedProjectID == nil { Image(systemName: "checkmark") }
+                    Text(selectedOperationID != nil ? "No operation" : "No project")
+                    if selectedProjectID == nil && selectedOperationID == nil { Image(systemName: "checkmark") }
                 }
             }
             if !availableProjects.isEmpty {
                 Divider()
+                Text("Projects")
                 ForEach(availableProjects) { context in
                     Button {
                         selectedProjectID = context.project.id
+                        selectedOperationID = nil
                     } label: {
                         HStack {
                             Text(context.project.displayTitle)
@@ -403,18 +583,38 @@ struct TaskComposerView: View {
                     }
                 }
             }
+            if !availableOperations.isEmpty {
+                Divider()
+                Text("Operations")
+                ForEach(availableOperations) { context in
+                    Button {
+                        selectedOperationID = context.operation.id
+                        selectedProjectID = nil
+                    } label: {
+                        HStack {
+                            Text(context.operation.title)
+                            if selectedOperationID == context.operation.id { Image(systemName: "checkmark") }
+                        }
+                    }
+                }
+            }
         }
     }
+
+    // Now button is in the header, not here as a pill anymore
 
     private var cadencePill: some View {
         ComposerCapturePill(
             icon: cadenceIcon,
             title: cadence.title,
-            isActive: cadence != .oneOff
+            isActive: cadence != .oneOff,
+            helpText: "Pattern: \(cadence.title)"
         ) {
             ForEach(TaskCadence.allCases) { option in
                 Button {
-                    cadence = option
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        cadence = option
+                    }
                 } label: {
                     HStack {
                         Text(option.title)
@@ -429,7 +629,10 @@ struct TaskComposerView: View {
         ComposerCapturePill(
             icon: "wrench.and.screwdriver",
             title: toolsLabel,
-            isActive: !toolBundleIDs.isEmpty
+            isActive: !toolBundleIDs.isEmpty,
+            helpText: toolBundleIDs.isEmpty
+                ? "Choose Mac apps needed for this task"
+                : "\(toolBundleIDs.count) tool\(toolBundleIDs.count == 1 ? "" : "s") attached"
         ) {
             Button("Choose apps…") {
                 toolsPickerOpen = true
@@ -446,7 +649,8 @@ struct TaskComposerView: View {
         ComposerCapturePill(
             icon: "calendar",
             title: planLabel,
-            isActive: hasStartDate || hasEndDate
+            isActive: hasStartDate || hasEndDate,
+            helpText: "Set optional start and target dates"
         ) {
             Toggle("Start date", isOn: $hasStartDate)
             if hasStartDate {
@@ -460,9 +664,13 @@ struct TaskComposerView: View {
     }
 
     private var morePill: some View {
-        ComposerCapturePill(icon: "ellipsis", title: "More") {
+        ComposerCapturePill(
+            icon: "ellipsis",
+            title: "More",
+            helpText: "Additional task options"
+        ) {
             if cadence == .repeatable {
-                Stepper("Reappear: \(repeatEveryMinutes) min", value: $repeatEveryMinutes, in: 15...2880, step: 15)
+                Stepper("Reappear: \(durationLabel(repeatEveryMinutes))", value: $repeatEveryMinutes, in: 15...2880, step: 15)
             }
             if cadence == .kpi {
                 Stepper("Amount: \(kpiTarget)", value: $kpiTarget, in: 1...500)
@@ -472,54 +680,157 @@ struct TaskComposerView: View {
                 }
                 Toggle("Reappear timer", isOn: $hasRepeatDelay)
                 if hasRepeatDelay {
-                    Stepper("After: \(repeatEveryMinutes) min", value: $repeatEveryMinutes, in: 15...2880, step: 15)
+                    Stepper("After: \(durationLabel(repeatEveryMinutes))", value: $repeatEveryMinutes, in: 15...2880, step: 15)
                 }
             }
             if cadence == .oneOff {
-                Text("Select Repeatable or KPI in Pattern for more options.")
-                    .font(.caption)
-                    .foregroundStyle(TurboTheme.mutedInk)
+                Button("Show in Now") {
+                    isScheduledNow = true
+                }
+                .disabled(isScheduledNow)
             }
         }
     }
 
     @ViewBuilder
     private var advancedPanels: some View {
-        if cadence != .oneOff {
-            VStack(alignment: .leading, spacing: 10) {
-                if cadence == .repeatable {
-                    cadenceDetailRow(
-                        icon: "repeat",
-                        title: "Reappears every \(repeatEveryMinutes) minutes after completion"
+        switch cadence {
+        case .oneOff:
+            EmptyView()
+        case .repeatable:
+            patternSettingsCard(title: "Repeat settings", icon: "repeat") {
+                settingStepper(
+                    title: "Reappear after completion",
+                    valueText: durationLabel(repeatEveryMinutes),
+                    value: $repeatEveryMinutes,
+                    range: 15...2880,
+                    step: 15,
+                    help: "How long after completion the task becomes available again"
+                )
+            }
+        case .kpi:
+            patternSettingsCard(title: "KPI settings", icon: "number") {
+                settingStepper(
+                    title: "Target amount",
+                    valueText: "\(kpiTarget)",
+                    value: $kpiTarget,
+                    range: 1...500,
+                    help: "The count required to complete this KPI"
+                )
+
+                settingsDivider
+
+                settingToggle(title: "Use rounds", isOn: $hasKpiRounds)
+                    .help("Track the KPI across a fixed number of rounds")
+                if hasKpiRounds {
+                    settingStepper(
+                        title: "Rounds",
+                        valueText: "\(kpiRoundsRemaining)",
+                        value: $kpiRoundsRemaining,
+                        range: 1...50,
+                        step: 1,
+                        help: "Number of KPI rounds remaining"
                     )
                 }
-                if cadence == .kpi {
-                    cadenceDetailRow(
-                        icon: "number",
-                        title: "Count to \(kpiTarget)\(hasKpiRounds ? " · \(kpiRoundsRemaining) round(s) left" : "")"
+
+                settingsDivider
+
+                settingToggle(title: "Reappear timer", isOn: $hasRepeatDelay)
+                    .help("Wait before making the KPI available for another count")
+                if hasRepeatDelay {
+                    settingStepper(
+                        title: "Reappear after",
+                        valueText: durationLabel(repeatEveryMinutes),
+                        value: $repeatEveryMinutes,
+                        range: 15...2880,
+                        step: 15,
+                        help: "Delay before the next KPI count becomes available"
                     )
                 }
             }
-            .padding(.top, 14)
         }
     }
 
-    private func cadenceDetailRow(icon: String, title: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(TurboTheme.mutedInk)
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(TurboTheme.mutedInk)
+    private func patternSettingsCard<Content: View>(
+        title: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(TurboTheme.ink)
+
+            VStack(alignment: .leading, spacing: 8) {
+                content()
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(TurboTheme.nestedCardFill.opacity(0.6))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(TurboTheme.nestedCardFill.opacity(0.48))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(TurboTheme.cardStroke.opacity(0.42), lineWidth: 1)
+        )
+        .padding(.bottom, 12)
+    }
+
+    private func settingStepper(
+        title: String,
+        valueText: String,
+        value: Binding<Int>,
+        range: ClosedRange<Int>,
+        step: Int = 1,
+        help: String
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(TurboTheme.mutedInk)
+            Spacer(minLength: 12)
+            Text(valueText)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(TurboTheme.ink)
+                .monospacedDigit()
+            Stepper("", value: value, in: range, step: step)
+                .labelsHidden()
+                .controlSize(.small)
+        }
+        .help(help)
+    }
+
+    private func settingToggle(title: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(TurboTheme.mutedInk)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+    }
+
+    private var settingsDivider: some View {
+        Divider().opacity(0.55)
+    }
+
+    private func durationLabel(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes) min" }
+        if minutes.isMultiple(of: 60) { return "\(minutes / 60) hr" }
+        return "\(minutes / 60) hr \(minutes % 60) min"
+    }
+
+    private var composerSize: CGSize {
+        switch cadence {
+        case .oneOff:
+            CGSize(width: 720, height: 380)
+        case .repeatable:
+            CGSize(width: 720, height: 450)
+        case .kpi:
+            CGSize(width: 720, height: 550)
+        }
     }
 
     private var toolsFooterButton: some View {
@@ -530,27 +841,31 @@ struct TaskComposerView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(TurboTheme.mutedInk)
                 .frame(width: 28, height: 28)
+                .glassEffect(.regular.interactive(), in: .circle)
         }
         .buttonStyle(.plain)
-        .help("Attach tools (Mac apps)")
+        .help(toolBundleIDs.isEmpty ? "Choose Mac apps needed for this task" : "\(toolBundleIDs.count) tool\(toolBundleIDs.count == 1 ? "" : "s") attached")
     }
 
     private var keyboardTraps: some View {
         VStack(spacing: 0) {
-            Button("") { status = .queued }
+            Button(action: { status = .queued }) { EmptyView() }
                 .keyboardShortcut("1", modifiers: [.command, .option])
-            Button("") { status = .active }
+            Button(action: { status = .active }) { EmptyView() }
                 .keyboardShortcut("2", modifiers: [.command, .option])
-            Button("") { status = .waiting }
+            Button(action: { status = .waiting }) { EmptyView() }
                 .keyboardShortcut("3", modifiers: [.command, .option])
-            Button("") { status = .paused }
+            Button(action: { status = .paused }) { EmptyView() }
                 .keyboardShortcut("4", modifiers: [.command, .option])
-            Button("") { status = .done }
+            Button(action: { status = .done }) { EmptyView() }
                 .keyboardShortcut("5", modifiers: [.command, .option])
-            Button("") { isScheduledNow.toggle() }
+            Button(action: { isScheduledNow.toggle() }) { EmptyView() }
                 .keyboardShortcut("b", modifiers: [.command, .option])
         }
+        .buttonStyle(.plain)
         .frame(width: 0, height: 0)
+        .opacity(0)
+        .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
@@ -561,6 +876,9 @@ struct TaskComposerView: View {
             if let selectedProjectID,
                let project = availableProjects.first(where: { $0.project.id == selectedProjectID }) {
                 parts.append(project.project.displayTitle)
+            } else if let selectedOperationID,
+                      let operation = availableOperations.first(where: { $0.operation.id == selectedOperationID }) {
+                parts.append(operation.operation.title)
             }
         } else {
             parts.append("Inbox")
@@ -578,6 +896,10 @@ struct TaskComposerView: View {
     }
 
     private var projectLabel: String {
+        if let selectedOperationID,
+           let operation = availableOperations.first(where: { $0.operation.id == selectedOperationID }) {
+            return operation.operation.title
+        }
         guard let selectedProjectID,
               let project = availableProjects.first(where: { $0.project.id == selectedProjectID }) else {
             return "Project"
@@ -613,14 +935,24 @@ struct TaskComposerView: View {
         return store.projectContexts.filter { $0.jobID == selectedJobID }
     }
 
+    private var availableOperations: [OperationContext] {
+        guard let selectedJobID else { return [] }
+        return store.operationContexts(jobID: selectedJobID).filter { !$0.operation.isArchived }
+    }
+
     private func syncProjectSelection() {
         if selectedJobID == nil {
             selectedProjectID = nil
+            selectedOperationID = nil
             return
         }
         if let pid = selectedProjectID,
            !availableProjects.contains(where: { $0.project.id == pid }) {
             selectedProjectID = nil
+        }
+        if let oid = selectedOperationID,
+           !availableOperations.contains(where: { $0.operation.id == oid }) {
+            selectedOperationID = nil
         }
     }
 
@@ -642,6 +974,7 @@ struct TaskComposerView: View {
             toolBundleIDs: toolBundleIDs,
             jobID: selectedJobID,
             projectID: selectedProjectID,
+            operationID: selectedOperationID,
             startDate: hasStartDate ? cal.startOfDay(for: startDate) : nil,
             endDate: hasEndDate ? cal.startOfDay(for: endDate) : nil
         )
@@ -662,7 +995,9 @@ struct FlowLayout: Layout {
     var spacing: CGFloat = 8
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 0
+        let width = proposal.width ?? subviews.reduce(0) { partial, subview in
+            partial + subview.sizeThatFits(.unspecified).width + spacing
+        }
         var x: CGFloat = 0
         var y: CGFloat = 0
         var rowHeight: CGFloat = 0
@@ -699,3 +1034,15 @@ struct FlowLayout: Layout {
         }
     }
 }
+
+#if DEBUG
+#Preview("Task composer pills") {
+    TaskComposerView(
+        preferredJobID: nil,
+        preferredProjectID: nil,
+        scheduleForNow: false
+    )
+    .environmentObject(TurboTaskStore.preview)
+    .frame(width: 720, height: 380)
+}
+#endif

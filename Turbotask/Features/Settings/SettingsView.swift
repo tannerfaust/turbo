@@ -335,12 +335,11 @@ struct SettingsView: View {
                     }
 
                     shortcutSection("Create & capture") {
-                        shortcutRow("⌘T", "New task (composer). If quick add is open on Now, toggles “Now” instead.")
-                        shortcutRow("⌘⇧N", "New task on Now (full composer)")
+                        shortcutRow("⌘T", "New task (composer)")
+                        shortcutRow("⌘N", "New task on Now (composer, scheduled to Now)")
+                        shortcutRow("⇧⌘A", "New task on Now (same as ⌘N)")
                         shortcutRow("⌘⇧P", "New project")
                         shortcutRow("⌘⇧J", "New field")
-                        shortcutRow("⌘N", "Toggle quick add on Now")
-                        shortcutRow("⇧⌘A", "Toggle quick add on Now (same as ⌘N)")
                     }
 
                     shortcutSection("Focus & layout") {
@@ -381,11 +380,6 @@ struct SettingsView: View {
                     ) {
                         shortcutRow("↑ ↓", "Move highlight while search field is focused")
                         shortcutRow("Return", "Activate highlighted row (select task/field or toggle app in Tools)")
-                    }
-
-                    shortcutSection("Quick add on Now") {
-                        shortcutRow("Esc", "Close quick add")
-                        shortcutRow("Return", "Create task (when title field is filled)")
                     }
 
                     shortcutSection(
