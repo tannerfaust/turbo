@@ -35,25 +35,12 @@ struct TaskSubtasksView: View {
 
     var body: some View {
         if !context.task.subtasks.isEmpty {
-            Group {
-                if isKanban {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(visibleSubtasks) { subtask in
-                            subtaskChip(subtask)
-                        }
-                        if hiddenCount > 0 {
-                            overflowLabel
-                        }
-                    }
-                } else {
-                    FlowLayout(spacing: 5) {
-                        ForEach(visibleSubtasks) { subtask in
-                            subtaskChip(subtask)
-                        }
-                        if hiddenCount > 0 {
-                            overflowLabel
-                        }
-                    }
+            VStack(alignment: .leading, spacing: isKanban ? 4 : 5) {
+                ForEach(visibleSubtasks) { subtask in
+                    subtaskRow(subtask)
+                }
+                if hiddenCount > 0 {
+                    overflowLabel
                 }
             }
             .padding(.leading, style == .list ? 16 : 0)
@@ -63,33 +50,43 @@ struct TaskSubtasksView: View {
     }
 
     private var overflowLabel: some View {
-        Text("+\(hiddenCount)")
-            .font(.system(size: isKanban ? 9 : 10, weight: .semibold))
-            .foregroundStyle(TurboTheme.mutedInk)
-            .padding(.horizontal, 6)
-            .padding(.vertical, isKanban ? 2 : 3)
-            .background(Capsule().fill(TurboTheme.nestedCardFill.opacity(0.65)))
+        HStack(spacing: 7) {
+            Capsule()
+                .fill(context.jobColor.opacity(0.32))
+                .frame(width: 2, height: 14)
+            Text("+\(hiddenCount) more")
+                .font(.system(size: isKanban ? 9 : 10, weight: .medium))
+                .foregroundStyle(TurboTheme.mutedInk)
+        }
+        .padding(.leading, isKanban ? 4 : 6)
+        .padding(.top, 1)
     }
 
-    private func subtaskChip(_ subtask: TaskSubtask) -> some View {
+    private func subtaskRow(_ subtask: TaskSubtask) -> some View {
         Button {
             store.setSubtaskDone(context: context, subtaskID: subtask.id, isDone: !subtask.isDone)
         } label: {
-            HStack(spacing: isKanban ? 5 : 6) {
+            HStack(spacing: isKanban ? 6 : 7) {
+                Capsule()
+                    .fill(subtask.isDone ? context.jobColor.opacity(0.34) : context.jobColor.opacity(0.5))
+                    .frame(width: 2, height: isKanban ? 20 : 22)
+
                 ZStack {
                     Circle()
-                        .fill(subtask.isDone ? context.jobColor.opacity(0.9) : context.jobColor.opacity(0.16))
+                        .fill(subtask.isDone ? context.jobColor.opacity(0.92) : TurboTheme.backgroundRaised.opacity(0.78))
+                    Circle()
+                        .stroke(subtask.isDone ? context.jobColor.opacity(0.92) : context.jobColor.opacity(0.42), lineWidth: 1)
                     if subtask.isDone {
                         Image(systemName: "checkmark")
                             .font(.system(size: isKanban ? 6 : 7, weight: .bold))
                             .foregroundStyle(.white)
                     } else {
                         Circle()
-                            .fill(context.jobColor.opacity(0.72))
-                            .frame(width: isKanban ? 3 : 3.5, height: isKanban ? 3 : 3.5)
+                            .fill(context.jobColor.opacity(0.78))
+                            .frame(width: isKanban ? 3.5 : 4, height: isKanban ? 3.5 : 4)
                     }
                 }
-                .frame(width: isKanban ? 12 : 13, height: isKanban ? 12 : 13)
+                .frame(width: isKanban ? 14 : 15, height: isKanban ? 14 : 15)
 
                 Text(subtask.title)
                     .font(.system(size: isKanban ? 10 : 11, weight: .medium))
@@ -97,18 +94,22 @@ struct TaskSubtasksView: View {
                     .strikethrough(subtask.isDone, color: TurboTheme.mutedInk.opacity(0.45))
                     .lineLimit(1)
                     .multilineTextAlignment(.leading)
+
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, isKanban ? 6 : 7)
-            .padding(.vertical, isKanban ? 3 : 4)
+            .padding(.leading, isKanban ? 5 : 6)
+            .padding(.trailing, isKanban ? 7 : 8)
+            .frame(height: isKanban ? 24 : 26)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                Capsule()
-                    .fill(subtask.isDone ? TurboTheme.nestedCardFill.opacity(0.44) : context.jobColor.opacity(0.075))
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(subtask.isDone ? TurboTheme.nestedCardFill.opacity(0.32) : context.jobColor.opacity(0.065))
             )
             .overlay(
-                Capsule()
-                    .stroke(subtask.isDone ? TurboTheme.cardStroke.opacity(0.34) : context.jobColor.opacity(0.18), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(subtask.isDone ? TurboTheme.cardStroke.opacity(0.28) : context.jobColor.opacity(0.16), lineWidth: 1)
             )
-            .contentShape(Capsule())
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(subtask.isDone ? "Mark subtask incomplete" : "Complete subtask")
