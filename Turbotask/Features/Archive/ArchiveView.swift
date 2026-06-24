@@ -73,7 +73,6 @@ struct ArchiveView: View {
         .sheet(item: $editingTask) { context in
             TaskEditorDialog(context: context)
                 .environmentObject(store)
-                .frame(minWidth: 760, idealWidth: 840, minHeight: 620, idealHeight: 700)
         }
     }
 
@@ -173,23 +172,29 @@ private struct ArchiveTaskRow: View {
                     diameter: 15
                 )
 
-                Button(action: onSelect) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(context.task.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(TurboTheme.ink)
-                            .lineLimit(1)
-                            .multilineTextAlignment(.leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Button(action: onSelect) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(context.task.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(TurboTheme.ink)
+                                .lineLimit(1)
+                                .multilineTextAlignment(.leading)
 
-                        Text(metaLine)
-                            .font(.caption2)
-                            .foregroundStyle(TurboTheme.mutedInk)
-                            .lineLimit(2)
+                            Text(metaLine)
+                                .font(.caption2)
+                                .foregroundStyle(TurboTheme.mutedInk)
+                                .lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+
+                    TaskSubtasksView(context: context, style: .list, maxVisible: 3)
+                        .environmentObject(store)
                 }
-                .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.leading, 8)
             .padding(.trailing, 10)

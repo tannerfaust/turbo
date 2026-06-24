@@ -10,12 +10,13 @@ import SwiftUI
 // MARK: - Shared chrome
 
 struct ComposerChrome<Content: View, FooterLeading: View>: View {
-    let breadcrumb: String
+    var breadcrumb: String? = nil
+    var headerLeading: AnyView? = nil
     let onClose: () -> Void
     var size = CGSize(width: 600, height: 500)
     var headerAccessory: AnyView? = nil
-  @ViewBuilder let content: () -> Content
-  @ViewBuilder let footerLeading: () -> FooterLeading
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let footerLeading: () -> FooterLeading
     let createMore: Binding<Bool>
     let createTitle: String
     let canCreate: Bool
@@ -36,7 +37,9 @@ struct ComposerChrome<Content: View, FooterLeading: View>: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            HStack(spacing: 6) {
+            if let headerLeading {
+                headerLeading
+            } else if let breadcrumb {
                 Text(breadcrumb)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(TurboTheme.mutedInk)
@@ -220,6 +223,7 @@ struct ComposerNowButton: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .help(isOn ? "Remove from Now · ⌥⌘B" : "Show in Now · ⌥⌘B")
         .accessibilityLabel(isOn ? "Now active" : "Schedule for now")
     }
@@ -227,7 +231,7 @@ struct ComposerNowButton: View {
 
 // MARK: - Status menu (icon-only, title row)
 
-private struct ComposerStatusMenuButton: View {
+struct ComposerStatusMenuButton: View {
     @Binding var selection: TaskStatus
     var accentColor: Color
 
@@ -326,6 +330,7 @@ struct TaskComposerView: View {
     @State private var hasEndDate = false
     @State private var startDate = Date()
     @State private var endDate = Date()
+    @State private var subtasks: [TaskSubtask] = []
 
     init(
         preferredJobID: UUID?,
@@ -348,12 +353,12 @@ struct TaskComposerView: View {
 
     var body: some View {
         ComposerChrome(
-            breadcrumb: breadcrumb,
+            headerLeading: AnyView(locationHeaderPills),
             onClose: { store.clearComposer() },
             size: composerSize,
             headerAccessory: AnyView(nowHeaderButton),
             content: { composerBody },
-            footerLeading: { toolsFooterButton },
+            footerLeading: { EmptyView() },
             createMore: $createMore,
             createTitle: "Create task",
             canCreate: canCreate,
@@ -401,41 +406,36 @@ struct TaskComposerView: View {
     }
 
     private var notesField: some View {
-        ZStack(alignment: .topLeading) {
-            TextEditor(text: $notes)
-                .font(.system(size: 14))
-                .foregroundStyle(TurboTheme.ink)
-                .scrollContentBackground(.hidden)
-                .background(.clear)
-                .focused($notesFocused)
-                .padding(.horizontal, -5)
-                .padding(.vertical, -8)
-
-            if notes.isEmpty {
-                Text("Add description or notes...")
-                    .font(.system(size: 14))
-                    .foregroundStyle(TurboTheme.mutedInk.opacity(0.72))
-                    .allowsHitTesting(false)
-            }
-        }
-        .padding(.top, 18)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, minHeight: 120, maxHeight: .infinity, alignment: .topLeading)
-        .layoutPriority(1)
+        TextField("Add description or notes...", text: $notes, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: 14))
+            .foregroundStyle(TurboTheme.ink)
+            .focused($notesFocused)
+            .lineLimit(3...)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
+            .frame(maxWidth: .infinity, minHeight: 120, maxHeight: .infinity, alignment: .topLeading)
+            .layoutPriority(1)
     }
 
     private var capturePills: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 energyPill
-                fieldPill
-                if selectedJobID != nil {
-                    projectPill
-                }
                 cadencePill
                 toolsPill
+                subtasksPill
                 planPill
                 morePill
+            }
+        }
+    }
+
+    private var locationHeaderPills: some View {
+        HStack(spacing: 6) {
+            fieldPill
+            if selectedJobID != nil {
+                projectPill
             }
         }
     }
@@ -645,6 +645,10 @@ struct TaskComposerView: View {
         }
     }
 
+    private var subtasksPill: some View {
+        TaskSubtasksPill(subtasks: $subtasks, accentColor: destinationAccent)
+    }
+
     private var planPill: some View {
         ComposerCapturePill(
             icon: "calendar",
@@ -833,20 +837,6 @@ struct TaskComposerView: View {
         }
     }
 
-    private var toolsFooterButton: some View {
-        Button {
-            toolsPickerOpen = true
-        } label: {
-            Image(systemName: "paperclip")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(TurboTheme.mutedInk)
-                .frame(width: 28, height: 28)
-                .glassEffect(.regular.interactive(), in: .circle)
-        }
-        .buttonStyle(.plain)
-        .help(toolBundleIDs.isEmpty ? "Choose Mac apps needed for this task" : "\(toolBundleIDs.count) tool\(toolBundleIDs.count == 1 ? "" : "s") attached")
-    }
-
     private var keyboardTraps: some View {
         VStack(spacing: 0) {
             Button(action: { status = .queued }) { EmptyView() }
@@ -869,24 +859,6 @@ struct TaskComposerView: View {
         .accessibilityHidden(true)
     }
 
-    private var breadcrumb: String {
-        var parts: [String] = []
-        if let selectedJobID, let job = store.jobs.first(where: { $0.id == selectedJobID }) {
-            parts.append(job.title)
-            if let selectedProjectID,
-               let project = availableProjects.first(where: { $0.project.id == selectedProjectID }) {
-                parts.append(project.project.displayTitle)
-            } else if let selectedOperationID,
-                      let operation = availableOperations.first(where: { $0.operation.id == selectedOperationID }) {
-                parts.append(operation.operation.title)
-            }
-        } else {
-            parts.append("Inbox")
-        }
-        parts.append("New task")
-        return parts.joined(separator: " › ")
-    }
-
     private var fieldLabel: String {
         guard let selectedJobID,
               let job = store.jobs.first(where: { $0.id == selectedJobID }) else {
@@ -902,7 +874,7 @@ struct TaskComposerView: View {
         }
         guard let selectedProjectID,
               let project = availableProjects.first(where: { $0.project.id == selectedProjectID }) else {
-            return "Project"
+            return "Project / Operation"
         }
         return project.project.displayTitle
     }
@@ -976,12 +948,14 @@ struct TaskComposerView: View {
             projectID: selectedProjectID,
             operationID: selectedOperationID,
             startDate: hasStartDate ? cal.startOfDay(for: startDate) : nil,
-            endDate: hasEndDate ? cal.startOfDay(for: endDate) : nil
+            endDate: hasEndDate ? cal.startOfDay(for: endDate) : nil,
+            subtasks: Task.normalizedSubtasks(subtasks)
         )
 
         if createMore {
             title = ""
             notes = ""
+            subtasks = []
             titleFocused = true
         } else {
             store.clearComposer()

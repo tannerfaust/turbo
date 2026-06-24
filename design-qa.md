@@ -1,48 +1,51 @@
 **Comparison Target**
 
-- Source visual truth: `/var/folders/fq/qdy74k_56bnbmtw80nj45v7w0000gn/T/TemporaryItems/NSIRD_screencaptureui_Gh4n1B/Screenshot 2026-06-22 at 18.35.17.png`
-- Implementation screenshot: `/tmp/turbo-composer-final-oneoff.png`
-- Conditional-state screenshot: `/tmp/turbo-composer-final-kpi.png`
-- Full-view comparison evidence: `/tmp/turbo-composer-full-comparison.png`
-- Focused control-rail comparison evidence: `/tmp/turbo-composer-focused-comparison.png`
+- Source visual truth: `/tmp/turbo-composer.png`
+- Implementation screenshot: `/tmp/turbo-editor-header-controls.png`
+- Quick-capture screenshot: `/tmp/turbo-composer-header-controls.png`
+- Side-by-side focused comparison: `/tmp/task-editor-qa-comparison.png`
 - Viewport: macOS desktop, 1512 × 982 points at 2× capture scale
-- State: new task, field selected, One-Off default; KPI captured separately
+- State: dark mode, existing One-Off task, no prerequisites
 
 **Findings**
 
 - No actionable P0, P1, or P2 findings remain.
-- Typography: the implementation uses the app's system typography with a clear 25-point semibold title and compact 12-point metadata. Weight, hierarchy, wrapping, and placeholder contrast are coherent with the reference.
-- Spacing and layout: title, description, metadata rail, and footer use a stable vertical hierarchy. Metadata controls share one baseline and no longer wrap in the default state.
-- Colors and tokens: semantic app colors and native adaptive Liquid Glass are used. The disabled primary action and muted placeholders remain legible in light mode.
-- Image and asset fidelity: this surface contains no raster imagery. All visible symbols use SF Symbols; no handcrafted SVG, CSS, or placeholder assets are present.
-- Copy and content: controls use Turbo's task vocabulary rather than copying Linear's domain labels. The location menu consolidates field, project, and operation placement.
-- Interactions: status, work mode, location, cadence, dates, create-more, attachment/tools, and header lightning actions are interactive. Hover help is exposed for every ambiguous control. KPI and Repeat settings appear only for their applicable cadence.
+- Typography: the editor matches quick capture's system type scale, title weight, muted placeholder treatment, and compact control labels.
+- Spacing and layout: the former 820 × 620 minimum-size sheet and large unused canvas were removed. The editor now sizes to its content at 760 points wide, with dependencies immediately below the metadata rail and the footer attached to the content.
+- Colors and tokens: all surfaces, borders, text, and semantic status colors use the existing `TurboTheme` tokens.
+- Image and asset fidelity: the surface has no raster assets. All icons are SF Symbols; no placeholder artwork or custom-drawn assets are used.
+- Copy and content: existing Turbo vocabulary is preserved. Dependencies are expressed as “Starts after” prerequisites, matching current task behavior.
+- Interaction: title, notes, status, Now, field, project/operation, work mode, cadence, tools, dates, archive, dependency add/remove, Cancel, and Save remain functional.
 
-**Intentional Deviations**
+**Focused Comparison Evidence**
 
-- Turbo keeps its own task fields and uses a compact header lightning action for Show in Now.
-- KPI selection expands the sheet to expose valid settings inline; the default One-Off composer remains compact.
+- The body comparison shows the same title/notes hierarchy, capsule metadata controls, borders, and footer structure as quick capture.
+- The editor adds only one primary block: a compact dependency section that expands with linked tasks.
+- A separate detail crop was unnecessary because the controls are legible in the focused side-by-side comparison.
 
 **Patches Made Since Previous QA Pass**
 
-- Replaced loose menu labels with native glass capsule controls.
-- Consolidated field/project/operation into one hierarchical Location menu.
-- Removed the unconditional More menu and added conditional KPI/Repeat settings.
-- Added distinct status symbols and tooltips.
-- Moved Show in Now to a compact header lightning button.
-- Normalized control height and repaired conditional-card spacing.
+- Replaced the generic grouped form with the quick-capture editing structure.
+- Removed minimum-size overrides from every task-editor sheet presentation.
+- Reduced the editor to an intrinsic 760-point-wide sheet.
+- Removed automatic title selection on open.
+- Moved dependencies into a concise inline block with visible add/remove actions.
+- Replaced editor breadcrumbs with Field and Project / Operation header controls.
+- Added the same progressive placement controls to quick capture; Project / Operation stays hidden until a field is selected.
+- Preserved and made task notes editable instead of clearing them on save.
+- Disabled the unwanted focus ring on the header Now control.
 
 **Implementation Checklist**
 
-- [x] Default metadata rail is a single aligned row.
-- [x] Conditional settings are hidden until applicable.
-- [x] Header and footer icon actions use compact interactive glass circles.
-- [x] Debug build succeeds and the app launches.
-- [x] One-Off and KPI states were captured and inspected.
-- [x] Location menu and hover-help accessibility values were verified at runtime.
+- [x] Debug build succeeds.
+- [x] All four existing tests pass.
+- [x] Existing-task editor opens inside the current app window as a sheet.
+- [x] Empty dependency state is compact.
+- [x] Linked dependency rows support removal and the add menu filters cycles and duplicates.
+- [x] Quick-capture visual language is preserved.
 
 **Follow-up Polish**
 
-- P3: dark-mode visual capture was not included in this pass; all colors and materials are system-adaptive.
+- P3: a task with several real prerequisites was not available in the captured workspace state; the multi-row dependency list was verified from code and constrained to a 126-point scrolling region.
 
 final result: passed

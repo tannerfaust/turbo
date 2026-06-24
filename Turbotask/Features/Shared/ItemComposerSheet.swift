@@ -91,7 +91,13 @@ struct ItemComposerSheet: View {
                 canCreate: selectedJobID != nil && !operationTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 onCreate: saveOperation
             )
-            .onAppear { DispatchQueue.main.async { titleFocused = true } }
+            .onAppear {
+                ensureOperationFieldSelection()
+                DispatchQueue.main.async { titleFocused = true }
+            }
+            .onChange(of: store.jobs.map(\.id)) { _, _ in
+                ensureOperationFieldSelection()
+            }
         }
     }
 
@@ -260,7 +266,7 @@ struct ItemComposerSheet: View {
             Text("Create a field first")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(TurboTheme.ink)
-            Text("Projects need a parent field before they can exist.")
+            Text("Projects and operations need a parent field before they can exist.")
                 .font(.body)
                 .foregroundStyle(TurboTheme.mutedInk)
 
@@ -341,11 +347,11 @@ struct ItemComposerSheet: View {
         guard let selectedJobID else { return }
         let title = operationTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
-        store.addOperation(
+        guard store.addOperation(
             title: title,
             summary: operationSummary.trimmingCharacters(in: .whitespacesAndNewlines),
             jobID: selectedJobID
-        )
+        ) != nil else { return }
         if createMore {
             operationTitle = ""
             operationSummary = ""
@@ -353,5 +359,17 @@ struct ItemComposerSheet: View {
         } else {
             store.clearComposer()
         }
+    }
+
+    private func ensureOperationFieldSelection() {
+        guard context.kind == .operation, !store.jobs.isEmpty else { return }
+        if let selectedJobID, store.jobs.contains(where: { $0.id == selectedJobID }) {
+            return
+        }
+        selectedJobID = context.preferredJobID.flatMap { preferred in
+            store.jobs.contains(where: { $0.id == preferred }) ? preferred : nil
+        } ?? store.selectedJobID.flatMap { selected in
+            store.jobs.contains(where: { $0.id == selected }) ? selected : nil
+        } ?? store.jobs.first?.id
     }
 }

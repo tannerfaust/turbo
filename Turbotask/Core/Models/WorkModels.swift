@@ -357,6 +357,18 @@ extension Project: Codable {
     }
 }
 
+struct TaskSubtask: Identifiable, Hashable, Codable {
+    let id: UUID
+    var title: String
+    var isDone: Bool
+
+    init(id: UUID = UUID(), title: String, isDone: Bool = false) {
+        self.id = id
+        self.title = title
+        self.isDone = isDone
+    }
+}
+
 struct Task: Identifiable, Hashable, Codable {
     let id: UUID
     var title: String
@@ -389,6 +401,8 @@ struct Task: Identifiable, Hashable, Codable {
     var archivedAt: Date?
     /// Task IDs that must reach Done before this task can start.
     var blockedByTaskIDs: [UUID]
+    /// Small checklist items that live inside the parent task.
+    var subtasks: [TaskSubtask]
 
     init(
         id: UUID = UUID(),
@@ -416,7 +430,8 @@ struct Task: Identifiable, Hashable, Codable {
         endDate: Date? = nil,
         isArchived: Bool = false,
         archivedAt: Date? = nil,
-        blockedByTaskIDs: [UUID] = []
+        blockedByTaskIDs: [UUID] = [],
+        subtasks: [TaskSubtask] = []
     ) {
         self.id = id
         self.title = title
@@ -444,6 +459,7 @@ struct Task: Identifiable, Hashable, Codable {
         self.isArchived = isArchived
         self.archivedAt = archivedAt
         self.blockedByTaskIDs = Task.normalizedBlockedByTaskIDs(blockedByTaskIDs, for: id)
+        self.subtasks = Task.normalizedSubtasks(subtasks)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -474,9 +490,11 @@ struct Task: Identifiable, Hashable, Codable {
         case isArchived
         case archivedAt
         case blockedByTaskIDs
+        case subtasks
     }
 
     static let maxDependenciesPerTask = 24
+    static let maxSubtasksPerTask = 24
 
     static func normalizedBlockedByTaskIDs(_ raw: [UUID], for taskID: UUID) -> [UUID] {
         var seen = Set<UUID>()
@@ -497,6 +515,18 @@ struct Task: Identifiable, Hashable, Codable {
             guard !t.isEmpty, seen.insert(t).inserted else { continue }
             out.append(t)
             if out.count >= Task.maxToolAppsPerTask { break }
+        }
+        return out
+    }
+
+    static func normalizedSubtasks(_ raw: [TaskSubtask]) -> [TaskSubtask] {
+        var seen = Set<UUID>()
+        var out: [TaskSubtask] = []
+        for item in raw {
+            let trimmed = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(item.id).inserted else { continue }
+            out.append(TaskSubtask(id: item.id, title: trimmed, isDone: item.isDone))
+            if out.count >= maxSubtasksPerTask { break }
         }
         return out
     }
@@ -536,6 +566,7 @@ struct Task: Identifiable, Hashable, Codable {
             try container.decodeIfPresent([UUID].self, forKey: .blockedByTaskIDs) ?? [],
             for: id
         )
+        subtasks = Task.normalizedSubtasks(try container.decodeIfPresent([TaskSubtask].self, forKey: .subtasks) ?? [])
     }
 
     func encode(to encoder: Encoder) throws {
@@ -566,6 +597,7 @@ struct Task: Identifiable, Hashable, Codable {
         try container.encode(isArchived, forKey: .isArchived)
         try container.encodeIfPresent(archivedAt, forKey: .archivedAt)
         try container.encode(blockedByTaskIDs, forKey: .blockedByTaskIDs)
+        try container.encode(subtasks, forKey: .subtasks)
     }
 
     /// Copies every mutable field from `other` onto `self` (same `id` required). Used for ⌘Z undo.
@@ -596,6 +628,7 @@ struct Task: Identifiable, Hashable, Codable {
         isArchived = other.isArchived
         archivedAt = other.archivedAt
         blockedByTaskIDs = other.blockedByTaskIDs
+        subtasks = other.subtasks
     }
 
     /// `true` when the task is not done and the calendar day is past the end date.

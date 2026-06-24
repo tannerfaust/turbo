@@ -14,6 +14,7 @@ struct TaskEditorDialog: View {
     let context: TaskContext
 
     @State private var title: String
+    @State private var notes: String
     @State private var energy: TaskEnergy
     @State private var cadence: TaskCadence
     @State private var status: TaskStatus
@@ -35,10 +36,12 @@ struct TaskEditorDialog: View {
     @State private var planStart = Date()
     @State private var planEnd = Date()
     @State private var blockedByTaskIDs: [UUID]
+    @State private var subtasks: [TaskSubtask]
 
     init(context: TaskContext) {
         self.context = context
         _title = State(initialValue: context.task.title)
+        _notes = State(initialValue: context.task.summary)
         _energy = State(initialValue: context.task.energy)
         _cadence = State(initialValue: context.task.cadence)
         _status = State(initialValue: context.task.status)
@@ -59,270 +62,24 @@ struct TaskEditorDialog: View {
         _planStart = State(initialValue: context.task.startDate ?? Date())
         _planEnd = State(initialValue: context.task.endDate ?? Date())
         _blockedByTaskIDs = State(initialValue: context.task.blockedByTaskIDs)
+        _subtasks = State(initialValue: context.task.subtasks)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Edit Task")
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    .foregroundStyle(TurboTheme.ink)
-                Text(locationSummary)
-                    .font(.subheadline)
-                    .foregroundStyle(TurboTheme.mutedInk)
-            }
-            .padding(24)
-
-            Divider()
-
-            Form {
-                if !store.jobs.isEmpty {
-                    Section("Location") {
-                        Picker("Field", selection: $selectedJobID) {
-                            Text("Inbox (no field)").tag(nil as UUID?)
-                            ForEach(store.jobs) { job in
-                                Text(job.title).tag(Optional(job.id))
-                            }
-                        }
-                        .pickerStyle(.menu)
-
-                        if selectedJobID != nil {
-                            Picker("Project", selection: $selectedProjectID) {
-                                Text("None — task on field only").tag(nil as UUID?)
-                                ForEach(availableProjects) { project in
-                                    Text(project.project.displayTitle).tag(Optional(project.project.id))
-                                }
-                            }
-                            .pickerStyle(.menu)
-
-                            Picker("Operation", selection: $selectedOperationID) {
-                                Text("None").tag(nil as UUID?)
-                                ForEach(availableOperations) { operation in
-                                    Text(operation.operation.title).tag(Optional(operation.operation.id))
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-                    }
-                }
-
-                Section("Task") {
-                    TextField("Title", text: $title)
-                }
-
-                Section("Tools needed") {
-                    VStack(spacing: 14) {
-                        HStack {
-                            Spacer(minLength: 0)
-                            TaskToolsIconRow(bundleIDs: toolBundleIDs, iconSize: 28, maxIcons: 8)
-                            Spacer(minLength: 0)
-                        }
-                        HStack {
-                            Spacer(minLength: 0)
-                            Button("Choose apps…") {
-                                toolsPickerOpen = true
-                            }
-                            .buttonStyle(.bordered)
-                            Spacer(minLength: 0)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .multilineTextAlignment(.center)
-                    .padding(.vertical, 4)
-                }
-
-                Section("Behavior") {
-                    HStack(alignment: .center, spacing: 14) {
-                        Text("Status")
-                            .font(.body)
-                            .foregroundStyle(TurboTheme.mutedInk)
-                            .frame(width: 76, alignment: .leading)
-                        Picker("", selection: $status) {
-                            ForEach(TaskStatus.allCases) { status in
-                                Text(status.title).tag(status)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .controlSize(.regular)
-                        .accessibilityLabel("Status")
-                    }
-                    .frame(minHeight: 28)
-
-                    HStack(alignment: .center, spacing: 14) {
-                        Text("Type")
-                            .font(.body)
-                            .foregroundStyle(TurboTheme.mutedInk)
-                            .frame(width: 76, alignment: .leading)
-                        Picker("", selection: $energy) {
-                            ForEach(TaskEnergy.allCases) { energy in
-                                Text(energy.title).tag(energy)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .controlSize(.regular)
-                        .accessibilityLabel("Work mode type")
-                    }
-                    .frame(minHeight: 28)
-
-                    HStack(alignment: .center, spacing: 14) {
-                        Text("Pattern")
-                            .font(.body)
-                            .foregroundStyle(TurboTheme.mutedInk)
-                            .frame(width: 76, alignment: .leading)
-                        Picker("", selection: $cadence) {
-                            ForEach(TaskCadence.allCases) { cadence in
-                                Text(cadence.title).tag(cadence)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .controlSize(.regular)
-                        .accessibilityLabel("Task pattern")
-                    }
-                    .frame(minHeight: 28)
-
-                    Toggle("Show in Now", isOn: $isScheduledNow)
-                        .trainingWheelsTooltip("Toggle Now scheduling · ⌥⌘B")
-
-                    Toggle("Archived (hidden from Now and field lists)", isOn: $isArchived)
-                        .trainingWheelsTooltip("Archive hides the task from active lists")
-                }
-
-                Section {
-                    Toggle("Start date", isOn: $hasStartDate)
-                    if hasStartDate {
-                        DatePicker("Starts", selection: $planStart, displayedComponents: .date)
-                    }
-                    Toggle("Target end date", isOn: $hasEndDate)
-                    if hasEndDate {
-                        DatePicker("Ends", selection: $planEnd, displayedComponents: .date)
-                    }
-                } header: {
-                    HStack(spacing: 6) {
-                        Text("Plan")
-                        TurboInfoButton(
-                            title: "Plan dates",
-                            message: "These dates are informational. They help with planning and overdue visibility, but they do not drive the task state."
-                        )
-                    }
-                }
-
-                Section {
-                    if blockedByTaskIDs.isEmpty {
-                        Text("No prerequisites. This task can start anytime.")
-                            .font(.subheadline)
-                            .foregroundStyle(TurboTheme.mutedInk)
-                    } else {
-                        ForEach(blockedByTaskIDs, id: \.self) { blockerID in
-                            HStack(spacing: 8) {
-                                Image(systemName: "link")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(Color(red: 0.52, green: 0.38, blue: 0.96))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(blockerTitle(for: blockerID))
-                                        .font(.subheadline.weight(.medium))
-                                    Text(blockerMeta(for: blockerID))
-                                        .font(.caption)
-                                        .foregroundStyle(TurboTheme.mutedInk)
-                                }
-                                Spacer(minLength: 0)
-                                Button {
-                                    blockedByTaskIDs.removeAll { $0 == blockerID }
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(TurboTheme.mutedInk)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Remove prerequisite")
-                            }
-                        }
-                    }
-
-                    Menu {
-                        if dependencyCandidates.isEmpty {
-                            Text("No other tasks available")
-                        } else {
-                            ForEach(dependencyCandidates) { candidate in
-                                Button {
-                                    blockedByTaskIDs.append(candidate.task.id)
-                                    blockedByTaskIDs = Task.normalizedBlockedByTaskIDs(blockedByTaskIDs, for: context.task.id)
-                                } label: {
-                                    Text(candidate.task.title)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label("Add prerequisite…", systemImage: "link.badge.plus")
-                    }
-                    .disabled(dependencyCandidates.isEmpty)
-                } header: {
-                    HStack(spacing: 6) {
-                        Text("Starts after")
-                        TurboInfoButton(
-                            title: "Task dependencies",
-                            message: "Linked tasks stay in Not Started until every prerequisite is Done. When the last blocker finishes, follow-ups move to In Progress automatically."
-                        )
-                    }
-                } footer: {
-                    Text("In Kanban, hold Option and drop one card onto another to link them the same way.")
-                        .font(.caption)
-                        .foregroundStyle(TurboTheme.mutedInk)
-                }
-
-                if cadence == .repeatable {
-                    Section("Repeat") {
-                        Stepper("Reappear After: \(repeatEveryMinutes) min", value: $repeatEveryMinutes, in: 15...2880, step: 15)
-                    }
-                }
-
-                if cadence == .kpi {
-                    Section("Counted Task") {
-                        Stepper("Amount: \(kpiTarget)", value: $kpiTarget, in: 1...500, step: 1)
-                        Toggle("Use rounds", isOn: $hasKpiRounds)
-                        if hasKpiRounds {
-                            Stepper("Rounds left: \(kpiRoundsRemaining)", value: $kpiRoundsRemaining, in: 1...50, step: 1)
-                        }
-                        Toggle("Reappear timer", isOn: $hasRepeatDelay)
-                        if hasRepeatDelay {
-                            Stepper("Reappear after: \(repeatEveryMinutes) min", value: $repeatEveryMinutes, in: 15...2880, step: 15)
-                        }
-                        Stepper("Current count: \(kpiCount)", value: $kpiCount, in: 0...10_000, step: 1)
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .sheet(isPresented: $toolsPickerOpen) {
-                TaskToolsPickerSheet(bundleIDs: $toolBundleIDs)
-                    .environmentObject(store)
-            }
-
-            Divider()
-
-            HStack {
-                Button("Cancel") {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-                .trainingWheelsTooltip("Discard changes · Esc")
-
-                Spacer()
-
-                Button("Save") {
-                    save()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .keyboardShortcut(.defaultAction)
-                .trainingWheelsTooltip("Save task · Return")
-            }
-            .padding(24)
+            editorHeader
+            Divider().opacity(0.65)
+            editorContent
+            Divider().opacity(0.65)
+            editorFooter
         }
+        .frame(width: 760)
         .background(TurboTheme.backgroundRaised)
+        .overlay { keyboardTraps }
+        .sheet(isPresented: $toolsPickerOpen) {
+            TaskToolsPickerSheet(bundleIDs: $toolBundleIDs)
+                .environmentObject(store)
+        }
         .onAppear {
             syncProjectSelection()
         }
@@ -335,6 +92,502 @@ struct TaskEditorDialog: View {
         .onChange(of: selectedOperationID) { _, value in
             if value != nil { selectedProjectID = nil }
         }
+        .animation(.easeInOut(duration: 0.18), value: cadence)
+    }
+
+    private var editorHeader: some View {
+        HStack(spacing: 10) {
+            fieldPill
+            if selectedJobID != nil {
+                projectPill
+            }
+            Spacer(minLength: 8)
+            ComposerNowButton(isOn: $isScheduledNow, glowColor: destinationAccent)
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(TurboTheme.mutedInk)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(TurboTheme.nestedCardFill))
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .help("Close · Esc")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    private var editorContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 10) {
+                ComposerStatusMenuButton(selection: $status, accentColor: destinationAccent)
+                TextField("Task title", text: $title)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 25, weight: .semibold))
+                    .foregroundStyle(TurboTheme.ink)
+            }
+
+            TextField("Add description or notes...", text: $notes, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .foregroundStyle(TurboTheme.ink)
+                .lineLimit(3...)
+                .padding(.top, 16)
+                .frame(maxWidth: .infinity, minHeight: 88, maxHeight: 120, alignment: .topLeading)
+
+            FlowLayout(spacing: 6) {
+                energyPill
+                cadencePill
+                toolsPill
+                subtasksPill
+                planPill
+            }
+            .padding(.top, 12)
+
+            patternSettings
+            dependenciesSection
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 22)
+        .padding(.bottom, 20)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var editorFooter: some View {
+        HStack(spacing: 12) {
+            Button { toolsPickerOpen = true } label: {
+                Image(systemName: "paperclip")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(TurboTheme.mutedInk)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+
+            Toggle("Archived", isOn: $isArchived)
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(TurboTheme.mutedInk)
+
+            Spacer(minLength: 0)
+
+            Button("Cancel") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+            Button("Save changes") { save() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    private var destinationAccent: Color {
+        guard let selectedJobID,
+              let job = store.jobs.first(where: { $0.id == selectedJobID }) else {
+            return TurboTheme.inboxAccent
+        }
+        return job.palette.color
+    }
+
+    private var energyPill: some View {
+        ComposerCapturePill(
+            icon: "bolt.fill",
+            iconColor: destinationAccent,
+            title: energy.shortTitle,
+            isActive: energy != .deepFocus,
+            helpText: "Work mode: \(energy.title)"
+        ) {
+            ForEach(TaskEnergy.allCases) { option in
+                Button {
+                    energy = option
+                } label: {
+                    HStack {
+                        Text(option.title)
+                        if energy == option { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+        }
+    }
+
+    private var fieldPill: some View {
+        ComposerCapturePill(
+            icon: selectedJobID == nil ? "tray" : "briefcase",
+            title: fieldLabel,
+            isActive: selectedJobID != nil,
+            helpText: "Field: \(fieldLabel)"
+        ) {
+            Button {
+                selectedJobID = nil
+                selectedProjectID = nil
+                selectedOperationID = nil
+            } label: {
+                HStack {
+                    Text("Inbox")
+                    if selectedJobID == nil { Image(systemName: "checkmark") }
+                }
+            }
+            if !store.jobs.isEmpty {
+                Divider()
+                ForEach(store.jobs) { job in
+                    Button {
+                        selectedJobID = job.id
+                        selectedProjectID = nil
+                        selectedOperationID = nil
+                    } label: {
+                        HStack {
+                            Text(job.title)
+                            if selectedJobID == job.id { Image(systemName: "checkmark") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var projectPill: some View {
+        ComposerCapturePill(
+            icon: selectedOperationID == nil ? "square.stack.3d.up" : "arrow.triangle.2.circlepath",
+            title: placementLabel,
+            isActive: selectedProjectID != nil || selectedOperationID != nil,
+            helpText: "Placement: \(placementLabel)"
+        ) {
+            Button {
+                selectedProjectID = nil
+                selectedOperationID = nil
+            } label: {
+                HStack {
+                    Text("Field only")
+                    if selectedProjectID == nil && selectedOperationID == nil { Image(systemName: "checkmark") }
+                }
+            }
+            if !availableProjects.isEmpty {
+                Divider()
+                Text("Projects")
+                ForEach(availableProjects) { item in
+                    Button {
+                        selectedProjectID = item.project.id
+                        selectedOperationID = nil
+                    } label: {
+                        HStack {
+                            Text(item.project.displayTitle)
+                            if selectedProjectID == item.project.id { Image(systemName: "checkmark") }
+                        }
+                    }
+                }
+            }
+            if !availableOperations.isEmpty {
+                Divider()
+                Text("Operations")
+                ForEach(availableOperations) { item in
+                    Button {
+                        selectedOperationID = item.operation.id
+                        selectedProjectID = nil
+                    } label: {
+                        HStack {
+                            Text(item.operation.title)
+                            if selectedOperationID == item.operation.id { Image(systemName: "checkmark") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var cadencePill: some View {
+        ComposerCapturePill(
+            icon: cadenceIcon,
+            title: cadence.title,
+            isActive: cadence != .oneOff,
+            helpText: "Pattern: \(cadence.title)"
+        ) {
+            ForEach(TaskCadence.allCases) { option in
+                Button {
+                    cadence = option
+                } label: {
+                    HStack {
+                        Text(option.title)
+                        if cadence == option { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+        }
+    }
+
+    private var toolsPill: some View {
+        ComposerCapturePill(
+            icon: "wrench.and.screwdriver",
+            title: toolBundleIDs.isEmpty ? "Tools" : "\(toolBundleIDs.count) tool\(toolBundleIDs.count == 1 ? "" : "s")",
+            isActive: !toolBundleIDs.isEmpty,
+            helpText: "Choose apps needed for this task"
+        ) {
+            Button("Choose apps…") { toolsPickerOpen = true }
+            if !toolBundleIDs.isEmpty {
+                Button("Clear tools", role: .destructive) { toolBundleIDs = [] }
+            }
+        }
+    }
+
+    private var subtasksPill: some View {
+        TaskSubtasksPill(subtasks: $subtasks, accentColor: destinationAccent)
+    }
+
+    private var planPill: some View {
+        ComposerCapturePill(
+            icon: "calendar",
+            title: planLabel,
+            isActive: hasStartDate || hasEndDate,
+            helpText: "Set optional plan dates"
+        ) {
+            Toggle("Start date", isOn: $hasStartDate)
+            if hasStartDate {
+                DatePicker("Starts", selection: $planStart, displayedComponents: .date)
+            }
+            Toggle("Target end", isOn: $hasEndDate)
+            if hasEndDate {
+                DatePicker("Ends", selection: $planEnd, displayedComponents: .date)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var patternSettings: some View {
+        if cadence != .oneOff {
+            HStack(spacing: 14) {
+                if cadence == .repeatable {
+                    Text("Reappear after completion")
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    Text(durationLabel(repeatEveryMinutes))
+                        .font(.system(size: 12, weight: .medium))
+                        .monospacedDigit()
+                    Stepper("", value: $repeatEveryMinutes, in: 15...2880, step: 15)
+                        .labelsHidden()
+                        .controlSize(.small)
+                } else {
+                    compactStepper("Target", value: $kpiTarget, range: 1...500)
+                    compactStepper("Current", value: $kpiCount, range: 0...10_000)
+                    Toggle("Rounds", isOn: $hasKpiRounds)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                    if hasKpiRounds {
+                        compactStepper("Left", value: $kpiRoundsRemaining, range: 1...50)
+                    }
+                    Toggle("Delay", isOn: $hasRepeatDelay)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                }
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(TurboTheme.mutedInk)
+            .padding(.horizontal, 12)
+            .frame(height: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(TurboTheme.nestedCardFill.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(TurboTheme.cardStroke.opacity(0.55), lineWidth: 1)
+            )
+            .padding(.top, 12)
+        }
+    }
+
+    private func compactStepper(
+        _ label: String,
+        value: Binding<Int>,
+        range: ClosedRange<Int>
+    ) -> some View {
+        HStack(spacing: 6) {
+            Text("\(label) \(value.wrappedValue)")
+            Stepper("", value: value, in: range)
+                .labelsHidden()
+                .controlSize(.small)
+        }
+    }
+
+    private var dependenciesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 7) {
+                Image(systemName: "link")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Starts after")
+                    .font(.system(size: 13, weight: .semibold))
+                if !blockedByTaskIDs.isEmpty {
+                    Text("\(blockedByTaskIDs.count)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(TurboTheme.mutedInk)
+                }
+                Spacer()
+                dependencyMenu
+            }
+
+            if blockedByTaskIDs.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle")
+                    Text("No prerequisites — this task can start anytime")
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(TurboTheme.mutedInk)
+                .padding(.horizontal, 12)
+                .frame(height: 42)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(TurboTheme.nestedCardFill.opacity(0.45))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(TurboTheme.cardStroke.opacity(0.55), lineWidth: 1)
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(blockedByTaskIDs.enumerated()), id: \.element) { index, blockerID in
+                            dependencyRow(blockerID)
+                            if index < blockedByTaskIDs.count - 1 {
+                                Divider().opacity(0.55)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 126)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(TurboTheme.nestedCardFill.opacity(0.45))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(TurboTheme.cardStroke.opacity(0.55), lineWidth: 1)
+                )
+            }
+        }
+        .padding(.top, 14)
+    }
+
+    private var dependencyMenu: some View {
+        Menu {
+            if dependencyCandidates.isEmpty {
+                Text("No tasks available")
+            } else {
+                ForEach(dependencyCandidates) { candidate in
+                    Button {
+                        blockedByTaskIDs.append(candidate.task.id)
+                        blockedByTaskIDs = Task.normalizedBlockedByTaskIDs(blockedByTaskIDs, for: context.task.id)
+                    } label: {
+                        VStack(alignment: .leading) {
+                            Text(candidate.task.title)
+                            if !candidate.metaSubtitleParts.isEmpty {
+                                Text(candidate.metaSubtitleParts.joined(separator: " · "))
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label("Add prerequisite", systemImage: "plus")
+                .font(.system(size: 12, weight: .medium))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(dependencyCandidates.isEmpty)
+    }
+
+    private func dependencyRow(_ blockerID: UUID) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(store.taskContext(taskID: blockerID)?.task.status.accent ?? TurboTheme.mutedInk)
+                .frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(blockerTitle(for: blockerID))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(TurboTheme.ink)
+                    .lineLimit(1)
+                Text(blockerMeta(for: blockerID))
+                    .font(.system(size: 11))
+                    .foregroundStyle(TurboTheme.mutedInk)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Button {
+                blockedByTaskIDs.removeAll { $0 == blockerID }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(TurboTheme.mutedInk)
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("Remove prerequisite")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 52)
+    }
+
+    private var keyboardTraps: some View {
+        VStack(spacing: 0) {
+            Button(action: { status = .queued }) { EmptyView() }
+                .keyboardShortcut("1", modifiers: [.command, .option])
+            Button(action: { status = .active }) { EmptyView() }
+                .keyboardShortcut("2", modifiers: [.command, .option])
+            Button(action: { status = .waiting }) { EmptyView() }
+                .keyboardShortcut("3", modifiers: [.command, .option])
+            Button(action: { status = .paused }) { EmptyView() }
+                .keyboardShortcut("4", modifiers: [.command, .option])
+            Button(action: { status = .done }) { EmptyView() }
+                .keyboardShortcut("5", modifiers: [.command, .option])
+            Button(action: { isScheduledNow.toggle() }) { EmptyView() }
+                .keyboardShortcut("b", modifiers: [.command, .option])
+        }
+        .buttonStyle(.plain)
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var fieldLabel: String {
+        guard let selectedJobID,
+              let job = store.jobs.first(where: { $0.id == selectedJobID }) else { return "Inbox" }
+        return job.title
+    }
+
+    private var placementLabel: String {
+        if let selectedProjectID,
+           let item = availableProjects.first(where: { $0.project.id == selectedProjectID }) {
+            return item.project.displayTitle
+        }
+        if let selectedOperationID,
+           let item = availableOperations.first(where: { $0.operation.id == selectedOperationID }) {
+            return item.operation.title
+        }
+        return "Project / Operation"
+    }
+
+    private var cadenceIcon: String {
+        switch cadence {
+        case .oneOff: "1.circle"
+        case .repeatable: "repeat"
+        case .kpi: "number"
+        }
+    }
+
+    private var planLabel: String {
+        if hasStartDate && hasEndDate { return "Plan dates" }
+        if hasStartDate { return "Start date" }
+        if hasEndDate { return "End date" }
+        return "Plan"
+    }
+
+    private func durationLabel(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes) min" }
+        if minutes.isMultiple(of: 60) { return "\(minutes / 60) hr" }
+        return "\(minutes / 60) hr \(minutes % 60) min"
     }
 
     private func save() {
@@ -357,10 +610,7 @@ struct TaskEditorDialog: View {
             destinationOperationID: destinationOperationID
         ) { task in
             task.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            task.summary = ""
-            task.why = ""
-            task.nextStep = ""
-            task.waitingOn = nil
+            task.summary = notes.trimmingCharacters(in: .whitespacesAndNewlines)
             task.toolBundleIDs = Task.normalizedToolBundleIDs(toolBundleIDs)
             task.energy = energy
             task.cadence = cadence
@@ -368,6 +618,7 @@ struct TaskEditorDialog: View {
             task.startDate = hasStartDate ? cal.startOfDay(for: planStart) : nil
             task.endDate = hasEndDate ? cal.startOfDay(for: planEnd) : nil
             task.blockedByTaskIDs = Task.normalizedBlockedByTaskIDs(blockedByTaskIDs, for: task.id)
+            task.subtasks = Task.normalizedSubtasks(subtasks)
             if cadence == .oneOff {
                 task.repeatEveryMinutes = nil
                 task.kpiTarget = nil
@@ -458,23 +709,6 @@ struct TaskEditorDialog: View {
     private var availableOperations: [OperationContext] {
         guard let selectedJobID else { return [] }
         return store.operationContexts(jobID: selectedJobID).filter { !$0.operation.isArchived }
-    }
-
-    private var locationSummary: String {
-        if let selectedJobID,
-           let job = store.jobs.first(where: { $0.id == selectedJobID }) {
-            if let selectedProjectID,
-               let project = availableProjects.first(where: { $0.project.id == selectedProjectID }) {
-                return "\(job.title) / \(project.project.displayTitle)"
-            }
-            if let selectedOperationID,
-               let operation = availableOperations.first(where: { $0.operation.id == selectedOperationID }) {
-                return "\(job.title) / \(operation.operation.title)"
-            }
-            return "\(job.title) / Field"
-        }
-
-        return "Inbox"
     }
 
     private func syncProjectSelection() {

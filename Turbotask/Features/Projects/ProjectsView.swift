@@ -166,7 +166,6 @@ struct ProjectsView: View {
         .sheet(item: $editingTask) { context in
             TaskEditorDialog(context: context)
                 .environmentObject(store)
-                .frame(minWidth: 760, idealWidth: 840, minHeight: 620, idealHeight: 700)
         }
     }
 
@@ -913,23 +912,29 @@ private struct PortfolioTaskRow: View {
                 diameter: 14
             )
 
-            Button(action: onSelect) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(context.task.title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(TurboTheme.ink)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    if let line = planLine {
-                        Text(line)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(overdue ? Color.red.opacity(0.92) : TurboTheme.mutedInk)
+            VStack(alignment: .leading, spacing: 2) {
+                Button(action: onSelect) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(context.task.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(TurboTheme.ink)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        if let line = planLine {
+                            Text(line)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(overdue ? Color.red.opacity(0.92) : TurboTheme.mutedInk)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+
+                TaskSubtasksView(context: context, style: .list, maxVisible: 3)
+                    .environmentObject(store)
             }
-            .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(action: onEditDates) {
                 Image(systemName: "calendar")

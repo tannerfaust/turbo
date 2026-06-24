@@ -90,7 +90,6 @@ struct FocusOverlayView: View {
         .sheet(item: $editingTask) { context in
             TaskEditorDialog(context: context)
                 .environmentObject(store)
-                .frame(minWidth: 760, idealWidth: 840, minHeight: 620, idealHeight: 700)
         }
     }
 
@@ -363,6 +362,9 @@ private struct FocusOverlayTaskRow: View {
                 if !context.task.toolBundleIDs.isEmpty {
                     TaskToolsIconRow(bundleIDs: context.task.toolBundleIDs, iconSize: 10, maxIcons: 4)
                 }
+
+                TaskSubtasksView(context: context, style: .kanban, maxVisible: 3)
+                    .environmentObject(store)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -411,6 +413,9 @@ private struct FocusOverlayTaskRow: View {
                             .foregroundStyle(TurboTheme.mutedInk.opacity(0.72))
                             .lineLimit(1)
                     }
+
+                    TaskSubtasksView(context: context, style: .kanban, maxVisible: 3)
+                        .environmentObject(store)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 

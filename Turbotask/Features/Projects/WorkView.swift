@@ -74,6 +74,11 @@ private struct OperationsView: View {
         operations.first(where: { $0.operation.id == selectedOperationID }) ?? operations.first
     }
 
+    private var storeSelectedOperation: (jobID: UUID, operationID: UUID)? {
+        guard case .operation(let jobID, let operationID) = store.selection else { return nil }
+        return (jobID, operationID)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -89,12 +94,20 @@ private struct OperationsView: View {
         .padding(.vertical, 18)
         .background(TurboTheme.background)
         .onAppear {
-            focusedJobID = focusedJobID ?? store.jobs.first?.id
-            syncSelection()
+            syncFocusedField()
+            syncSelection(preferStoreSelection: true)
+        }
+        .onChange(of: store.jobs.map(\.id)) { _, _ in
+            syncFocusedField()
+            syncSelection(preferStoreSelection: true)
+        }
+        .onChange(of: store.selection) { _, _ in
+            syncFocusedField()
+            syncSelection(preferStoreSelection: true)
         }
         .onChange(of: focusedJobID) { _, _ in syncSelection() }
-        .onChange(of: showArchived) { _, _ in syncSelection() }
-        .onChange(of: operations.map(\.id)) { _, _ in syncSelection() }
+        .onChange(of: showArchived) { _, _ in syncSelection(preferStoreSelection: true) }
+        .onChange(of: operations.map(\.id)) { _, _ in syncSelection(preferStoreSelection: true) }
         .alert("Delete operation?", isPresented: Binding(
             get: { pendingDelete != nil },
             set: { if !$0 { pendingDelete = nil } }
@@ -214,10 +227,32 @@ private struct OperationsView: View {
         }
     }
 
-    private func syncSelection() {
-        if !operations.contains(where: { $0.operation.id == selectedOperationID }) {
+    private func syncFocusedField() {
+        if let selected = storeSelectedOperation,
+           store.operationContext(jobID: selected.jobID, operationID: selected.operationID) != nil {
+            focusedJobID = selected.jobID
+            return
+        }
+
+        if let focusedJobID, store.jobs.contains(where: { $0.id == focusedJobID }) {
+            return
+        }
+
+        focusedJobID = store.selectedJobID.flatMap { selectedJobID in
+            store.jobs.contains(where: { $0.id == selectedJobID }) ? selectedJobID : nil
+        } ?? store.jobs.first?.id
+    }
+
+    private func syncSelection(preferStoreSelection: Bool = false) {
+        if preferStoreSelection,
+           let selected = storeSelectedOperation,
+           selected.jobID == focusedJobID,
+           operations.contains(where: { $0.operation.id == selected.operationID }) {
+            selectedOperationID = selected.operationID
+        } else if !operations.contains(where: { $0.operation.id == selectedOperationID }) {
             selectedOperationID = operations.first?.operation.id
         }
+
         if let selected = selected {
             store.select(.operation(jobID: selected.jobID, operationID: selected.operation.id))
         }
@@ -257,9 +292,13 @@ private struct OperationInspector: View {
             }
 
             List(tasks) { task in
-                HStack {
+                HStack(alignment: .top) {
                     TaskStatusRowIndicator(status: task.task.status, jobColor: task.jobColor, diameter: 14)
-                    Text(task.task.title).lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(task.task.title).lineLimit(1)
+                        TaskSubtasksView(context: task, style: .list, maxVisible: 3)
+                            .environmentObject(store)
+                    }
                 }
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { onEditTask(task) }

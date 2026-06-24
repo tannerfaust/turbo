@@ -1,0 +1,29 @@
+{
+  "name": "@turbotask/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "turbotask-mcp": "./dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node ./dist/server.js",
+    "dev": "tsx ./src/server.ts",
+    "test": "vitest run",
+    "check": "npm run build && npm run test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}

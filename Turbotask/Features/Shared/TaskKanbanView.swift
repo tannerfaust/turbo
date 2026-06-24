@@ -734,6 +734,9 @@ private struct KanbanTaskCard: View {
                     .foregroundStyle(TurboTheme.mutedInk)
                 }
 
+                TaskSubtasksView(context: context, style: .kanban, maxVisible: 4)
+                    .environmentObject(store)
+
                 HStack(spacing: 6) {
                     if context.isOperationTask {
                         Image(systemName: "arrow.triangle.2.circlepath")

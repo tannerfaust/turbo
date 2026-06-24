@@ -128,7 +128,6 @@ struct JobsView: View {
         .sheet(item: $editingTask) { context in
             TaskEditorDialog(context: context)
                 .environmentObject(store)
-                .frame(minWidth: 760, idealWidth: 840, minHeight: 620, idealHeight: 700)
         }
         .onAppear {
             if browserJobID == nil {
@@ -748,27 +747,33 @@ private struct JobsWorkbenchTaskRow: View {
             )
             .frame(width: 52, alignment: .leading)
 
-            Button {
-                store.selectTask(context)
-            } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(context.task.title)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(TurboTheme.ink)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(2)
-                    if !context.task.nextStep.isEmpty {
-                        Text(context.task.nextStep)
-                            .font(.caption2)
-                            .foregroundStyle(TurboTheme.mutedInk)
-                            .lineLimit(1)
+            VStack(alignment: .leading, spacing: 3) {
+                Button {
+                    store.selectTask(context)
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(context.task.title)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(TurboTheme.ink)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(2)
+                        if !context.task.nextStep.isEmpty {
+                            Text(context.task.nextStep)
+                                .font(.caption2)
+                                .foregroundStyle(TurboTheme.mutedInk)
+                                .lineLimit(1)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .trainingWheelsTooltip("Select for ⌘↩ ⌘P ⌘D ⌘⇧U")
+
+                TaskSubtasksView(context: context, style: .list)
+                    .environmentObject(store)
             }
-            .buttonStyle(.plain)
-            .trainingWheelsTooltip("Select for ⌘↩ ⌘P ⌘D ⌘⇧U")
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Button {
                 store.toggleTaskNow(context)

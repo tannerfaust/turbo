@@ -226,7 +226,6 @@ struct NowView: View {
                 .sheet(item: $editingTask) { context in
                     TaskEditorDialog(context: context)
                         .environmentObject(store)
-                        .frame(minWidth: 760, idealWidth: 840, minHeight: 620, idealHeight: 700)
                 }
             }
         }
@@ -1274,10 +1273,7 @@ private struct NowTaskBlock: View {
     let onEditTask: (TaskContext) -> Void
 
     @State private var isHovering = false
-
-    private var isSelected: Bool {
-        store.selection == .task(jobID: context.jobID, projectID: context.projectID, taskID: context.task.id)
-    }
+    @State private var isStatusPickerPresented = false
 
     private var rowFlashActive: Bool { store.nowRowFlashTaskID == context.task.id }
 
@@ -1301,8 +1297,20 @@ private struct NowTaskBlock: View {
                 .frame(width: rowFlashActive || isHovering ? 3 : 2, height: 36)
                 .opacity(context.task.status == .done ? 0.35 : 0.95)
 
-            TaskStatusRowIndicator(status: context.task.status, jobColor: context.jobColor, diameter: 17)
-                .accessibilityHidden(true)
+            Button {
+                isStatusPickerPresented.toggle()
+            } label: {
+                TaskStatusRowIndicator(status: context.task.status, jobColor: context.jobColor, diameter: 17)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Status: \(context.task.status.title) · click to change")
+            .accessibilityLabel("Task status: \(context.task.status.title)")
+            .accessibilityHint("Opens status menu")
+            .popover(isPresented: $isStatusPickerPresented, arrowEdge: .bottom) {
+                statusPicker
+            }
 
             HStack(alignment: .center, spacing: 12) {
                 HStack(alignment: .center, spacing: 8) {
@@ -1324,6 +1332,9 @@ private struct NowTaskBlock: View {
                             .foregroundStyle(TurboTheme.mutedInk.opacity(0.88))
                             .lineLimit(1)
                         }
+
+                        TaskSubtasksView(context: context, style: .list)
+                            .environmentObject(store)
                     }
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -1376,8 +1387,6 @@ private struct NowTaskBlock: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                taskStatusMenu
-                    .opacity(isHovering || isSelected || rowFlashActive ? 1 : 0.72)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1432,98 +1441,41 @@ private struct NowTaskBlock: View {
         return Color.clear
     }
 
-    private var taskStatusMenu: some View {
-        Menu {
+    private var statusPicker: some View {
+        VStack(alignment: .leading, spacing: 2) {
             ForEach(TaskStatus.allCases) { status in
                 Button {
-                    guard context.task.status != status else { return }
-                    store.setTaskStatus(context, status: status)
+                    if context.task.status != status {
+                        store.setTaskStatus(context, status: status)
+                    }
+                    isStatusPickerPresented = false
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: statusMenuSymbol(status))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(statusMenuIconTint(status))
-                            .frame(width: 16, alignment: .center)
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(status.accent)
+                            .frame(width: 8, height: 8)
                         Text(status.title)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(TurboTheme.ink)
+                        Spacer(minLength: 20)
                         if context.task.status == status {
                             Image(systemName: "checkmark")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(context.jobColor)
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(TurboTheme.mutedInk)
                         }
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(context.task.status == status ? TurboTheme.nestedCardFill : .clear)
+                    )
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: statusMenuSymbol(context.task.status))
-                    .font(.system(size: 10, weight: .semibold))
-                Text(statusShortLabel(context.task.status))
-                    .font(.caption2.weight(.semibold))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(TurboTheme.mutedInk.opacity(0.75))
-            }
-            .foregroundStyle(statusPillForeground)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(statusPillFill))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(statusPillStroke, lineWidth: 0.5))
         }
-        .menuStyle(.borderlessButton)
-        .buttonStyle(.plain)
-        .trainingWheelsTooltip("Set status: queued, active, paused, waiting, done")
-        .accessibilityLabel("Status: \(context.task.status.title)")
-        .accessibilityHint("Opens a menu to choose Not Started, In Progress, Waiting, Paused, or Done")
-    }
-
-    private var statusPillForeground: Color {
-        switch context.task.status {
-        case .done: TurboTheme.mutedInk
-        case .active: context.jobColor
-        default: context.task.status.accent
-        }
-    }
-
-    private var statusPillFill: Color {
-        switch context.task.status {
-        case .done: TurboTheme.nestedCardFill.opacity(0.9)
-        case .queued: TurboTheme.mutedInk.opacity(0.06)
-        case .active: context.jobColor.opacity(0.12)
-        default: context.task.status.accent.opacity(0.12)
-        }
-    }
-
-    private var statusPillStroke: Color {
-        switch context.task.status {
-        case .done: TurboTheme.divider
-        case .queued: TurboTheme.divider
-        case .active: context.jobColor.opacity(0.32)
-        default: context.task.status.accent.opacity(0.28)
-        }
-    }
-
-    private func statusMenuIconTint(_ status: TaskStatus) -> Color {
-        status == .active ? context.jobColor : status.accent
-    }
-
-    private func statusShortLabel(_ status: TaskStatus) -> String {
-        switch status {
-        case .queued: "Open"
-        case .active: "Active"
-        case .waiting: "Waiting"
-        case .paused: "Paused"
-        case .done: "Done"
-        }
-    }
-
-    private func statusMenuSymbol(_ status: TaskStatus) -> String {
-        switch status {
-        case .queued: "circle"
-        case .active: "play.fill"
-        case .waiting: "hourglass"
-        case .paused: "pause.fill"
-        case .done: "checkmark.circle.fill"
-        }
+        .padding(8)
+        .frame(width: 190)
     }
 }

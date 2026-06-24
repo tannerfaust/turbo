@@ -150,7 +150,6 @@ struct TasksView: View {
         .sheet(item: $editingTask) { context in
             TaskEditorDialog(context: context)
                 .environmentObject(store)
-                .frame(minWidth: 760, idealWidth: 840, minHeight: 620, idealHeight: 700)
         }
     }
 
@@ -640,33 +639,39 @@ private struct TasksRegistryRow: View {
                     diameter: 15
                 )
 
-                Button {
-                    switch store.linkingRole(for: context.task.id) {
-                    case .validTarget:
-                        store.completeDependencyLinking(prerequisiteID: context.task.id)
-                    case .inactive:
-                        onSelect()
-                    case .source, .invalidTarget:
-                        break
-                    }
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(context.task.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(TurboTheme.ink)
-                            .lineLimit(1)
-                            .multilineTextAlignment(.leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Button {
+                        switch store.linkingRole(for: context.task.id) {
+                        case .validTarget:
+                            store.completeDependencyLinking(prerequisiteID: context.task.id)
+                        case .inactive:
+                            onSelect()
+                        case .source, .invalidTarget:
+                            break
+                        }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(context.task.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(TurboTheme.ink)
+                                .lineLimit(1)
+                                .multilineTextAlignment(.leading)
 
-                        Text(metaLine)
-                            .font(.caption2)
-                            .foregroundStyle(TurboTheme.mutedInk)
-                            .lineLimit(1)
+                            Text(metaLine)
+                                .font(.caption2)
+                                .foregroundStyle(TurboTheme.mutedInk)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .trainingWheelsTooltip("Select task · use search ↑ ↓ + Return when filter is focused")
+
+                    TaskSubtasksView(context: context, style: .list)
+                        .environmentObject(store)
                 }
-                .buttonStyle(.plain)
-                .trainingWheelsTooltip("Select task · use search ↑ ↓ + Return when filter is focused")
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button(action: onToggleNow) {
                     Image(systemName: context.task.isScheduledNow ? "bolt.fill" : "bolt")

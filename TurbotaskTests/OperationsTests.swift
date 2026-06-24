@@ -17,6 +17,27 @@ final class OperationsTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(Operation.self, from: data), operation)
     }
 
+    func testAddOperationTrimsAndSelectsCreatedOperation() throws {
+        let job = Job(title: "Field", summary: "", palette: .ocean, projects: [])
+        let store = TurboTaskStore(jobs: [job], history: [], persistenceEnabled: false)
+
+        let operationID = try XCTUnwrap(store.addOperation(title: "  Support  ", summary: "  Keep it running  ", jobID: job.id))
+
+        XCTAssertEqual(store.jobs[0].operations.count, 1)
+        XCTAssertEqual(store.jobs[0].operations[0].title, "Support")
+        XCTAssertEqual(store.jobs[0].operations[0].summary, "Keep it running")
+        XCTAssertEqual(store.selectedOperationID, operationID)
+    }
+
+    func testAddOperationRejectsMissingFieldAndBlankTitle() {
+        let job = Job(title: "Field", summary: "", palette: .ocean, projects: [])
+        let store = TurboTaskStore(jobs: [job], history: [], persistenceEnabled: false)
+
+        XCTAssertNil(store.addOperation(title: "   ", summary: "Nope", jobID: job.id))
+        XCTAssertNil(store.addOperation(title: "Support", summary: "", jobID: UUID()))
+        XCTAssertTrue(store.jobs[0].operations.isEmpty)
+    }
+
     func testArchiveAndRestoreOnlyCascadedTasks() {
         var alreadyArchived = task(title: "Old")
         alreadyArchived.isArchived = true

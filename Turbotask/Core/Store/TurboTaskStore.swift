@@ -1065,12 +1065,19 @@ final class TurboTaskStore: ObservableObject {
         registerUndoAddProject(projectID: project.id, jobID: jobID)
     }
 
-    func addOperation(title: String, summary: String, jobID: UUID) {
-        guard let jobIndex = jobs.firstIndex(where: { $0.id == jobID }) else { return }
-        let operation = Operation(title: title, summary: summary)
+    @discardableResult
+    func addOperation(title: String, summary: String, jobID: UUID) -> UUID? {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty,
+              let jobIndex = jobs.firstIndex(where: { $0.id == jobID }) else { return nil }
+        let operation = Operation(
+            title: trimmedTitle,
+            summary: summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
         jobs[jobIndex].operations.append(operation)
         selection = .operation(jobID: jobID, operationID: operation.id)
         persist()
+        return operation.id
     }
 
     func updateOperation(jobID: UUID, operationID: UUID, mutate: (inout Operation) -> Void) {
@@ -1167,7 +1174,8 @@ final class TurboTaskStore: ObservableObject {
         projectID: UUID?,
         operationID: UUID? = nil,
         startDate: Date? = nil,
-        endDate: Date? = nil
+        endDate: Date? = nil,
+        subtasks: [TaskSubtask] = []
     ) {
         let task = Task(
             title: title,
@@ -1190,7 +1198,8 @@ final class TurboTaskStore: ObservableObject {
             kpiCount: 0,
             toolBundleIDs: toolBundleIDs,
             startDate: startDate,
-            endDate: endDate
+            endDate: endDate,
+            subtasks: subtasks
         )
 
         if let jobID {
@@ -1267,6 +1276,13 @@ final class TurboTaskStore: ObservableObject {
             destinationOperationID: context.operationID,
             mutate: mutate
         )
+    }
+
+    func setSubtaskDone(context: TaskContext, subtaskID: UUID, isDone: Bool) {
+        updateTask(context: context) { task in
+            guard let index = task.subtasks.firstIndex(where: { $0.id == subtaskID }) else { return }
+            task.subtasks[index].isDone = isDone
+        }
     }
 
     @discardableResult
