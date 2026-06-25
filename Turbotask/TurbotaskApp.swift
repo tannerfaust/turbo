@@ -11,14 +11,11 @@ import SwiftUI
 
 @main
 struct TurbotaskApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = TurboTaskStore.bootstrap()
 
     init() {
         NSWindow.allowsAutomaticWindowTabbing = false
-        // NSApp / application icon is not safe in App.init — shared app may not exist yet.
-        DispatchQueue.main.async {
-            Self.applyDockIconFromAssetIfAvailable()
-        }
     }
 
     var body: some Scene {
@@ -30,8 +27,10 @@ struct TurbotaskApp: App {
                 .onAppear {
                     DayBatteryClock.shared.start()
                     ActiveTasksStatusBarController.shared.startObserving(store)
+                    AILimitNotifier.requestAuthorizationIfNeeded()
                     _Concurrency.Task { @MainActor in
                         store.releaseTasksReadyToReturnIfNeeded()
+                        store.releaseAILimitTasksIfNeeded()
                         store.applyIdleTaskAutoArchiveIfNeeded()
                         store.applyDoneTaskAutoArchiveIfNeeded()
                         store.applyArchivedTaskAutoDeleteIfNeeded()
@@ -40,6 +39,7 @@ struct TurbotaskApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     _Concurrency.Task { @MainActor in
                         store.releaseTasksReadyToReturnIfNeeded()
+                        store.releaseAILimitTasksIfNeeded()
                         store.applyIdleTaskAutoArchiveIfNeeded()
                         store.applyDoneTaskAutoArchiveIfNeeded()
                         store.applyArchivedTaskAutoDeleteIfNeeded()
@@ -47,6 +47,7 @@ struct TurbotaskApp: App {
                 }
                 .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
                     store.releaseTasksReadyToReturnIfNeeded()
+                    store.releaseAILimitTasksIfNeeded()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     store.flushPersistenceNow()
@@ -234,10 +235,5 @@ struct TurbotaskApp: App {
                 .keyboardShortcut(.delete, modifiers: .command)
             }
         }
-    }
-
-    private static func applyDockIconFromAssetIfAvailable() {
-        guard let logo = NSImage(named: "AppLogo") else { return }
-        NSApplication.shared.applicationIconImage = logo
     }
 }

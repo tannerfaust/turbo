@@ -5,6 +5,7 @@
 //  Created by Codex on 01.04.2026.
 //
 
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -210,6 +211,8 @@ struct SettingsView: View {
 
                 DayPlannerCard()
                     .environmentObject(store)
+
+                MCPIntegrationCard()
 
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 6) {
@@ -431,6 +434,174 @@ struct SettingsView: View {
                 .frame(minWidth: 88, alignment: .leading)
             Text(detail)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// MARK: - MCP Integration Card
+
+private struct MCPIntegrationCard: View {
+    @State private var copiedLabel: String?
+
+    private var serverPath: String {
+        let homeCandidate = "\(NSHomeDirectory())/Turbo/mcp/turbotask-mcp/dist/server.js"
+        let workspaceCandidate = "/Users/mediaalamedia/Turbo/mcp/turbotask-mcp/dist/server.js"
+        if FileManager.default.fileExists(atPath: homeCandidate) {
+            return homeCandidate
+        }
+        return workspaceCandidate
+    }
+
+    private var packagePath: String {
+        (serverPath as NSString).deletingLastPathComponent
+            .replacingOccurrences(of: "/dist", with: "")
+    }
+
+    private var workspacePath: String {
+        "\(NSHomeDirectory())/Library/Application Support/TurboTasker/workspace.json"
+    }
+
+    private var serverExists: Bool {
+        FileManager.default.fileExists(atPath: serverPath)
+    }
+
+    private var setupCommands: String {
+        """
+        cd "\(packagePath)"
+        npm install
+        npm run build
+        """
+    }
+
+    private var runCommand: String {
+        "node \"\(serverPath)\""
+    }
+
+    private var clientConfig: String {
+        """
+        {
+          "mcpServers": {
+            "turbotask": {
+              "command": "node",
+              "args": ["\(serverPath)"]
+            }
+          }
+        }
+        """
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(TurboTheme.accent)
+                Text("MCP")
+                    .font(.headline)
+                    .foregroundStyle(TurboTheme.ink)
+                TurboInfoButton(
+                    title: "Local MCP access",
+                    message: "Codex, Claude, and Cursor can connect to Turbotask through the local stdio MCP server. No API keys are needed; the server reads and writes the local Turbotask workspace file."
+                )
+                Spacer()
+                Label(serverExists ? "Built" : "Build needed", systemImage: serverExists ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(serverExists ? TurboTheme.accent : TurboTheme.warning)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                mcpFactRow("Server", serverPath)
+                mcpFactRow("Workspace", workspacePath)
+                mcpFactRow("Transport", "stdio")
+                mcpFactRow("Keys", "None")
+            }
+
+            Divider()
+
+            codeBlock(title: "Build or update the local server", value: setupCommands, copyLabel: "setup")
+            codeBlock(title: "Manual run command", value: runCommand, copyLabel: "run")
+            codeBlock(
+                title: "Codex / Claude / Cursor config",
+                value: clientConfig,
+                copyLabel: "config",
+                note: "Use this same JSON shape in each client’s MCP server settings."
+            )
+
+            Text("The app and MCP server share the same workspace JSON. If the app is open while an agent writes changes, switch back to Turbotask or relaunch if you need to force a fresh read.")
+                .font(.caption)
+                .foregroundStyle(TurboTheme.mutedInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .turboCard()
+    }
+
+    private func mcpFactRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TurboTheme.ink)
+                .frame(width: 72, alignment: .leading)
+            Text(value)
+                .font(.caption.monospaced())
+                .foregroundStyle(TurboTheme.mutedInk)
+                .textSelection(.enabled)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func codeBlock(title: String, value: String, copyLabel: String, note: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(TurboTheme.ink)
+                Spacer()
+                Button {
+                    copy(value, label: copyLabel)
+                } label: {
+                    Label(copiedLabel == copyLabel ? "Copied" : "Copy", systemImage: copiedLabel == copyLabel ? "checkmark" : "doc.on.doc")
+                        .font(.caption.weight(.medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(value)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(TurboTheme.ink)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(TurboTheme.nestedCardFill)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(TurboTheme.divider, lineWidth: 1)
+                    )
+            )
+
+            if let note {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(TurboTheme.mutedInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func copy(_ value: String, label: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        copiedLabel = label
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            if copiedLabel == label {
+                copiedLabel = nil
+            }
         }
     }
 }

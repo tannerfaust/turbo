@@ -668,6 +668,10 @@ private struct KanbanTaskCard: View {
         isBlocked ? TaskKanbanLayout.dependencyTint : context.jobColor
     }
 
+    private var aiLimitDimmed: Bool {
+        store.isTaskHeldByAILimit(context.task)
+    }
+
     private var cardFillColor: Color {
         let done = context.task.status == .done
         if isSelected {
@@ -750,6 +754,13 @@ private struct KanbanTaskCard: View {
                         .foregroundStyle(TurboTheme.mutedInk)
                         .lineLimit(1)
                     Spacer(minLength: 0)
+                    if let provider = context.task.aiProvider {
+                        AIAgentIcon(provider: provider, size: 12)
+                            .help(aiLimitDimmed
+                                ? "\(provider.title) paused — usage limit reached"
+                                : "Depends on \(provider.title)")
+                            .accessibilityLabel("Depends on \(provider.title)")
+                    }
                     Text(context.task.energy.shortTitle)
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(context.task.energy.accent)
@@ -783,6 +794,8 @@ private struct KanbanTaskCard: View {
                     .allowsHitTesting(false)
             }
         }
+        .opacity(aiLimitDimmed ? 0.5 : 1)
+        .saturation(aiLimitDimmed ? 0.3 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onTapGesture(count: 2) {
             guard linkingRole == .inactive else { return }

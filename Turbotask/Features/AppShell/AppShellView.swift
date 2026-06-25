@@ -10,6 +10,7 @@ import SwiftUI
 struct AppShellView: View {
     @EnvironmentObject private var store: TurboTaskStore
     @State private var sidebarSelection: TurboTaskStore.Screen?
+    @State private var nowTitleCollapsed = false
 
     var body: some View {
         NavigationSplitView {
@@ -153,6 +154,10 @@ struct AppShellView: View {
     @ViewBuilder
     private var detailView: some View {
         VStack(spacing: 0) {
+            if currentScreen == .now && nowTitleCollapsed {
+                nowStickyTitleBar
+            }
+
             ScreenShortcutBar(screen: currentScreen)
 
             Group {
@@ -176,6 +181,55 @@ struct AppShellView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(
+            WindowTitleBarController(
+                title: windowTitleText,
+                isHidden: windowTitleHidden
+            )
+        )
+        .onPreferenceChange(NowTitleCollapsePreferenceKey.self) { collapsed in
+            guard currentScreen == .now else { return }
+            withAnimation(.snappy(duration: 0.16)) {
+                nowTitleCollapsed = collapsed
+            }
+        }
+        .onChange(of: currentScreen) { _, screen in
+            if screen != .now {
+                nowTitleCollapsed = false
+            }
+        }
+    }
+
+    private var nowStickyTitleBar: some View {
+        HStack {
+            Text("Now")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(TurboTheme.ink)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(TurboTheme.background)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(TurboTheme.divider.opacity(0.35))
+                .frame(height: 1)
+        }
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private var windowTitleHidden: Bool {
+        currentScreen == .now && !nowTitleCollapsed
+    }
+
+    private var windowTitleText: String {
+        switch currentScreen {
+        case .now:
+            nowTitleCollapsed ? "Now" : ""
+        default:
+            "Turbo"
         }
     }
 

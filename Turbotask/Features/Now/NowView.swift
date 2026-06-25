@@ -96,20 +96,27 @@ struct NowView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack(alignment: .center, spacing: 10) {
+                        HStack(alignment: .center, spacing: 8) {
                             Text("Now")
                                 .font(.system(size: 22, weight: .semibold))
                                 .foregroundStyle(TurboTheme.ink)
-                            Spacer(minLength: 8)
-                            Picker("View", selection: $viewMode) {
-                                ForEach(NowBoardMode.allCases) { mode in
-                                    Text(mode.title).tag(mode)
-                                }
+                                .background(
+                                    GeometryReader { proxy in
+                                        Color.clear.preference(
+                                            key: NowTitleCollapsePreferenceKey.self,
+                                            value: proxy.frame(in: .named(NowScrollSpace.name)).minY < -6
+                                        )
+                                    }
+                                )
+
+                            Spacer(minLength: 12)
+
+                            NowViewModeMenuButton(selection: $viewMode)
+                            AILimitControlBar()
+                                .environmentObject(store)
+                            NowNewTaskButton {
+                                store.openComposer(.task, scheduleForNow: true)
                             }
-                            .pickerStyle(.segmented)
-                            .controlSize(.small)
-                            .frame(width: 220)
-                            .trainingWheelsTooltip("List, Kanban, or tree · ⇧⌘L")
                         }
 
                         TodayScopeBar(
@@ -122,21 +129,6 @@ struct NowView: View {
                             ReturningLaterCard(tasks: upcomingRepeatables, onEditTask: { editingTask = $0 })
                                 .environmentObject(store)
                         }
-
-                        Button {
-                            store.openComposer(.task, scheduleForNow: true)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 11, weight: .bold))
-                                Text("New task")
-                                    .font(.subheadline.weight(.semibold))
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(TurboTheme.ink)
-                        .controlSize(.regular)
-                        .trainingWheelsTooltip("Open task composer · ⌘N · schedules to Now")
 
                         let scoped = store.scopedNowTasks
                         switch viewMode {
@@ -394,6 +386,102 @@ private enum NowLocalKeyRouter {
     }
 }
 
+private enum NowBoardMode: String, CaseIterable, Identifiable {
+    case list
+    case kanban
+    case tree
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .list: "List"
+        case .kanban: "Kanban"
+        case .tree: "Tree"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .list: "list.bullet"
+        case .kanban: "square.grid.3x2"
+        case .tree: "point.3.filled.connected.trianglepath.dotted"
+        }
+    }
+}
+
+private struct NowViewModeMenuButton: View {
+    @Binding var selection: NowBoardMode
+
+    var body: some View {
+        Menu {
+            ForEach(NowBoardMode.allCases) { mode in
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        selection = mode
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: mode.symbol)
+                            .font(.system(size: 11, weight: .medium))
+                            .frame(width: 16, alignment: .center)
+                        Text(mode.title)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if selection == mode {
+                            Image(systemName: "checkmark")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(TurboTheme.accent)
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: selection.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(selection.title)
+                    .font(.system(size: 12, weight: .semibold))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(TurboTheme.mutedInk.opacity(0.7))
+            }
+            .foregroundStyle(TurboTheme.ink)
+            .glassControlChrome()
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("View: \(selection.title)")
+        .trainingWheelsTooltip("List, Kanban, or tree · \(selection.title) · ⇧⌘L")
+        .accessibilityLabel("View: \(selection.title)")
+        .accessibilityHint("Opens a menu to choose list, kanban, or tree layout")
+    }
+}
+
+private struct NowNewTaskButton: View {
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .bold))
+                Text("New task")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(TurboTheme.ink)
+            .glassControlChrome(active: isHovering, tint: TurboTheme.accent)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .onHover { isHovering = $0 }
+        .trainingWheelsTooltip("Open task composer · ⌘N · schedules to Now")
+        .accessibilityLabel("New task")
+    }
+}
+
 private struct NowListGroupingMenuButton: View {
     @Binding var selection: NowListGroupingMode
 
@@ -451,30 +539,6 @@ private struct NowListGroupingMenuButton: View {
         .trainingWheelsTooltip("Grouping · \(selection.title) · ⌥⌘0 off · ⌥⌘J fields · ⌥⌘G fields + projects")
         .accessibilityLabel("List grouping: \(selection.title)")
         .accessibilityHint("Opens a menu to choose how tasks are grouped in the list")
-    }
-}
-
-private enum NowBoardMode: String, CaseIterable, Identifiable {
-    case list
-    case kanban
-    case tree
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .list: "List"
-        case .kanban: "Kanban"
-        case .tree: "Tree"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .list: "list.bullet"
-        case .kanban: "square.grid.3x2"
-        case .tree: "point.3.filled.connected.trianglepath.dotted"
-        }
     }
 }
 
@@ -1273,7 +1337,6 @@ private struct NowTaskBlock: View {
     let onEditTask: (TaskContext) -> Void
 
     @State private var isHovering = false
-    @State private var isStatusPickerPresented = false
 
     private var rowFlashActive: Bool { store.nowRowFlashTaskID == context.task.id }
 
@@ -1290,6 +1353,10 @@ private struct NowTaskBlock: View {
         return parts.joined(separator: " \u{00B7} ")
     }
 
+    private var aiLimitDimmed: Bool {
+        store.isTaskHeldByAILimit(context.task)
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -1297,31 +1364,38 @@ private struct NowTaskBlock: View {
                 .frame(width: rowFlashActive || isHovering ? 3 : 2, height: 36)
                 .opacity(context.task.status == .done ? 0.35 : 0.95)
 
-            Button {
-                isStatusPickerPresented.toggle()
+            TaskStatusPickerPopover(
+                selection: context.task.status,
+                jobColor: context.jobColor,
+                helpText: "Status: \(context.task.status.title) · click to change",
+                trainingWheelsTooltip: "Set status: queued, active, paused, waiting, done",
+                accessibilityHint: "Opens a menu to choose Not Started, In Progress, Waiting, Paused, or Done"
+            ) { status in
+                guard context.task.status != status else { return }
+                store.setTaskStatus(context, status: status)
             } label: {
                 TaskStatusRowIndicator(status: context.task.status, jobColor: context.jobColor, diameter: 17)
                     .frame(width: 24, height: 24)
                     .contentShape(Circle())
             }
-            .buttonStyle(.plain)
-            .help("Status: \(context.task.status.title) · click to change")
-            .accessibilityLabel("Task status: \(context.task.status.title)")
-            .accessibilityHint("Opens status menu")
-            .popover(isPresented: $isStatusPickerPresented, arrowEdge: .bottom) {
-                statusPicker
-            }
 
             HStack(alignment: .center, spacing: 12) {
                 HStack(alignment: .center, spacing: 8) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(context.task.title)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(context.task.status == .done ? TurboTheme.mutedInk : TurboTheme.ink)
-                            .strikethrough(context.task.status == .done, color: TurboTheme.mutedInk.opacity(0.5))
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(compact ? 2 : 2)
-                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 6) {
+                            Text(context.task.title)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(titleInk)
+                                .strikethrough(context.task.status == .done, color: TurboTheme.mutedInk.opacity(0.5))
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(compact ? 2 : 2)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            if let provider = context.task.aiProvider {
+                                AIAgentIcon(provider: provider, size: 14)
+                                    .help("Depends on \(provider.title)")
+                            }
+                        }
 
                         if !metaLine.isEmpty || context.isOperationTask {
                             HStack(spacing: 4) {
@@ -1394,6 +1468,8 @@ private struct NowTaskBlock: View {
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(rowFill)
+        .opacity(aiLimitDimmed ? 0.46 : 1)
+        .saturation(aiLimitDimmed ? 0.25 : 1)
         .contentShape(Rectangle())
         .id(context.task.id)
         .nowTaskFrameReporter(taskID: context.task.id)
@@ -1441,41 +1517,9 @@ private struct NowTaskBlock: View {
         return Color.clear
     }
 
-    private var statusPicker: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(TaskStatus.allCases) { status in
-                Button {
-                    if context.task.status != status {
-                        store.setTaskStatus(context, status: status)
-                    }
-                    isStatusPickerPresented = false
-                } label: {
-                    HStack(spacing: 10) {
-                        Circle()
-                            .fill(status.accent)
-                            .frame(width: 8, height: 8)
-                        Text(status.title)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(TurboTheme.ink)
-                        Spacer(minLength: 20)
-                        if context.task.status == status {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(TurboTheme.mutedInk)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(context.task.status == status ? TurboTheme.nestedCardFill : .clear)
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(8)
-        .frame(width: 190)
+    private var titleInk: Color {
+        if aiLimitDimmed { return TurboTheme.mutedInk.opacity(0.72) }
+        if context.task.status == .done { return TurboTheme.mutedInk }
+        return TurboTheme.ink
     }
 }

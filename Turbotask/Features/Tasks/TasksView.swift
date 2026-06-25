@@ -182,6 +182,8 @@ struct TasksView: View {
                     .foregroundStyle(TurboTheme.ink)
             }
             Spacer(minLength: 8)
+            AILimitControlBar()
+                .environmentObject(store)
             Text("\(filteredTasks.count)")
                 .font(.system(size: 28, weight: .bold, design: .rounded))
                 .foregroundStyle(TurboTheme.ink.opacity(0.22))
@@ -626,6 +628,10 @@ private struct TasksRegistryRow: View {
     let onToggleNow: () -> Void
     let onEdit: () -> Void
 
+    private var aiLimitDimmed: Bool {
+        store.isTaskHeldByAILimit(context.task)
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             Rectangle()
@@ -651,11 +657,17 @@ private struct TasksRegistryRow: View {
                         }
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(context.task.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(TurboTheme.ink)
-                                .lineLimit(1)
-                                .multilineTextAlignment(.leading)
+                            HStack(spacing: 6) {
+                                Text(context.task.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(aiLimitDimmed ? TurboTheme.mutedInk.opacity(0.72) : TurboTheme.ink)
+                                    .lineLimit(1)
+                                    .multilineTextAlignment(.leading)
+                                if let provider = context.task.aiProvider {
+                                    AIAgentIcon(provider: provider, size: 14)
+                                        .help("Depends on \(provider.title)")
+                                }
+                            }
 
                             Text(metaLine)
                                 .font(.caption2)
@@ -693,6 +705,8 @@ private struct TasksRegistryRow: View {
             .padding(.vertical, 7)
         }
         .background(rowBackground)
+        .opacity(aiLimitDimmed ? 0.46 : 1)
+        .saturation(aiLimitDimmed ? 0.25 : 1)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(TurboTheme.divider.opacity(0.22))

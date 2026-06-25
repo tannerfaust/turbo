@@ -53,6 +53,10 @@ struct WorkspaceSnapshot: Codable {
     var focusOverlayWindowFrame: FocusOverlayWindowFrame?
     var trainingWheelsEnabled: Bool
     var typeaheadListNavigationEnabled: Bool
+    /// Per-provider reset schedule. Each assistant (Claude, Codex, …) resets on its own clock.
+    var aiLimitSchedules: [AIDependencyProvider: AILimitSchedule]
+    /// Per-provider hold: while a provider's date is in the future, its AI-dependent tasks stay paused.
+    var aiLimitHolds: [AIDependencyProvider: Date]
 
     init(
         jobs: [Job],
@@ -75,7 +79,9 @@ struct WorkspaceSnapshot: Codable {
         focusOverlayPresenceMode: FocusOverlayPresenceMode = .allDesktops,
         focusOverlayWindowFrame: FocusOverlayWindowFrame? = nil,
         trainingWheelsEnabled: Bool = true,
-        typeaheadListNavigationEnabled: Bool = true
+        typeaheadListNavigationEnabled: Bool = true,
+        aiLimitSchedules: [AIDependencyProvider: AILimitSchedule] = [:],
+        aiLimitHolds: [AIDependencyProvider: Date] = [:]
     ) {
         self.jobs = jobs
         self.standaloneTasks = standaloneTasks
@@ -98,6 +104,8 @@ struct WorkspaceSnapshot: Codable {
         self.focusOverlayWindowFrame = focusOverlayWindowFrame
         self.trainingWheelsEnabled = trainingWheelsEnabled
         self.typeaheadListNavigationEnabled = typeaheadListNavigationEnabled
+        self.aiLimitSchedules = aiLimitSchedules
+        self.aiLimitHolds = aiLimitHolds
     }
 
     enum CodingKeys: String, CodingKey {
@@ -125,6 +133,11 @@ struct WorkspaceSnapshot: Codable {
         case focusOverlayWindowFrame
         case trainingWheelsEnabled
         case typeaheadListNavigationEnabled
+        case aiLimitSchedules
+        case aiLimitHolds
+        // Legacy single-schedule keys (decode-only, for migration).
+        case aiLimitSchedule
+        case aiLimitHoldUntil
     }
 
     init(from decoder: Decoder) throws {
@@ -155,6 +168,36 @@ struct WorkspaceSnapshot: Codable {
         focusOverlayWindowFrame = try container.decodeIfPresent(FocusOverlayWindowFrame.self, forKey: .focusOverlayWindowFrame)
         trainingWheelsEnabled = try container.decodeIfPresent(Bool.self, forKey: .trainingWheelsEnabled) ?? true
         typeaheadListNavigationEnabled = try container.decodeIfPresent(Bool.self, forKey: .typeaheadListNavigationEnabled) ?? true
+        if let schedules = try container.decodeIfPresent([String: AILimitSchedule].self, forKey: .aiLimitSchedules) {
+            aiLimitSchedules = Self.providerKeyed(schedules)
+        } else if let legacy = try container.decodeIfPresent(AILimitSchedule.self, forKey: .aiLimitSchedule) {
+            // Migration: the old global schedule becomes every provider's starting point.
+            aiLimitSchedules = Dictionary(uniqueKeysWithValues: AIDependencyProvider.allCases.map { ($0, legacy) })
+        } else {
+            aiLimitSchedules = [:]
+        }
+
+        if let holds = try container.decodeIfPresent([String: Date].self, forKey: .aiLimitHolds) {
+            aiLimitHolds = Self.providerKeyed(holds)
+        } else if let legacyHold = try container.decodeIfPresent(Date.self, forKey: .aiLimitHoldUntil) {
+            aiLimitHolds = Dictionary(uniqueKeysWithValues: AIDependencyProvider.allCases.map { ($0, legacyHold) })
+        } else {
+            aiLimitHolds = [:]
+        }
+    }
+
+    private static func providerKeyed<V>(_ dict: [String: V]) -> [AIDependencyProvider: V] {
+        var out: [AIDependencyProvider: V] = [:]
+        for (key, value) in dict {
+            if let provider = AIDependencyProvider(rawValue: key) { out[provider] = value }
+        }
+        return out
+    }
+
+    private static func stringKeyed<V>(_ dict: [AIDependencyProvider: V]) -> [String: V] {
+        var out: [String: V] = [:]
+        for (key, value) in dict { out[key.rawValue] = value }
+        return out
     }
 
     func encode(to encoder: Encoder) throws {
@@ -180,6 +223,8 @@ struct WorkspaceSnapshot: Codable {
         try container.encodeIfPresent(focusOverlayWindowFrame, forKey: .focusOverlayWindowFrame)
         try container.encode(trainingWheelsEnabled, forKey: .trainingWheelsEnabled)
         try container.encode(typeaheadListNavigationEnabled, forKey: .typeaheadListNavigationEnabled)
+        try container.encode(Self.stringKeyed(aiLimitSchedules), forKey: .aiLimitSchedules)
+        try container.encode(Self.stringKeyed(aiLimitHolds), forKey: .aiLimitHolds)
     }
 }
 

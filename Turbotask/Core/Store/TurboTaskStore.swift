@@ -332,6 +332,21 @@ final class TurboTaskStore: ObservableObject {
             }
         }
     }
+    @Published var aiLimitSchedules: [AIDependencyProvider: AILimitSchedule] {
+        didSet {
+            if persistenceEnabled, oldValue != aiLimitSchedules {
+                schedulePersistenceIfNeeded()
+            }
+        }
+    }
+    @Published var aiLimitHolds: [AIDependencyProvider: Date] {
+        didSet {
+            derivedStateIsDirty = true
+            if persistenceEnabled, oldValue != aiLimitHolds {
+                schedulePersistenceIfNeeded()
+            }
+        }
+    }
     @Published var tasksPresentation = TasksPresentationState() {
         didSet {
             guard persistenceEnabled, oldValue != tasksPresentation else { return }
@@ -422,6 +437,8 @@ final class TurboTaskStore: ObservableObject {
         focusOverlayWindowFrame: FocusOverlayWindowFrame? = nil,
         trainingWheelsEnabled: Bool = true,
         typeaheadListNavigationEnabled: Bool = true,
+        aiLimitSchedules: [AIDependencyProvider: AILimitSchedule] = [:],
+        aiLimitHolds: [AIDependencyProvider: Date] = [:],
         tasksPresentation: TasksPresentationState? = nil,
         persistenceEnabled: Bool = true
     ) {
@@ -445,6 +462,8 @@ final class TurboTaskStore: ObservableObject {
         self.focusOverlayWindowFrame = focusOverlayWindowFrame
         self.trainingWheelsEnabled = trainingWheelsEnabled
         self.typeaheadListNavigationEnabled = typeaheadListNavigationEnabled
+        self.aiLimitSchedules = aiLimitSchedules
+        self.aiLimitHolds = aiLimitHolds
         self.tasksPresentation = tasksPresentation ?? TasksPresentationState()
         self.persistenceEnabled = persistenceEnabled
         rebuildDerivedState()
@@ -475,6 +494,8 @@ final class TurboTaskStore: ObservableObject {
                 focusOverlayWindowFrame: snapshot.focusOverlayWindowFrame,
                 trainingWheelsEnabled: snapshot.trainingWheelsEnabled,
                 typeaheadListNavigationEnabled: snapshot.typeaheadListNavigationEnabled,
+                aiLimitSchedules: snapshot.aiLimitSchedules,
+                aiLimitHolds: snapshot.aiLimitHolds,
                 tasksPresentation: snapshot.tasksPresentation
             )
             store.ensureSelection()
@@ -510,8 +531,102 @@ final class TurboTaskStore: ObservableObject {
             focusOverlayPresenceMode: focusOverlayPresenceMode,
             focusOverlayWindowFrame: focusOverlayWindowFrame,
             trainingWheelsEnabled: trainingWheelsEnabled,
-            typeaheadListNavigationEnabled: typeaheadListNavigationEnabled
+            typeaheadListNavigationEnabled: typeaheadListNavigationEnabled,
+            aiLimitSchedules: aiLimitSchedules,
+            aiLimitHolds: aiLimitHolds
         )
+    }
+
+    // MARK: AI limits (per provider)
+
+    func aiLimitSchedule(for provider: AIDependencyProvider) -> AILimitSchedule {
+        aiLimitSchedules[provider] ?? AILimitSchedule()
+    }
+
+    func updateAILimitSchedule(for provider: AIDependencyProvider, _ mutate: (inout AILimitSchedule) -> Void) {
+        var schedule = aiLimitSchedule(for: provider)
+        mutate(&schedule)
+        aiLimitSchedules[provider] = schedule
+
+        // If this assistant is currently paused, re-anchor its countdown to the new
+        // reset time immediately rather than waiting for the next pause cycle.
+        if let existing = aiLimitHolds[provider], existing > .now {
+            aiLimitHolds[provider] = schedule.nextReset(after: .now)
+        }
+    }
+
+    /// Reset instant for a provider, but only while it's still in the future.
+    func aiLimitHoldUntil(for provider: AIDependencyProvider) -> Date? {
+        guard let until = aiLimitHolds[provider], until > .now else { return nil }
+        return until
+    }
+
+    func isAILimitActive(for provider: AIDependencyProvider) -> Bool {
+        aiLimitHoldUntil(for: provider) != nil
+    }
+
+    var activeAILimitProviders: [AIDependencyProvider] {
+        AIDependencyProvider.allCases.filter { isAILimitActive(for: $0) }
+    }
+
+    var isAnyAILimitActive: Bool { !activeAILimitProviders.isEmpty }
+
+    /// The earliest upcoming reset among currently-held providers (drives the toolbar countdown).
+    var soonestAILimitHoldUntil: Date? {
+        activeAILimitProviders.compactMap { aiLimitHoldUntil(for: $0) }.min()
+    }
+
+    var aiDependentOpenTasks: [TaskContext] {
+        taskContexts.filter { context in
+            context.task.aiProvider != nil
+                && !context.task.isArchived
+                && context.task.status != .done
+        }
+    }
+
+    func aiDependentOpenTasks(for provider: AIDependencyProvider) -> [TaskContext] {
+        aiDependentOpenTasks.filter { $0.task.aiProvider == provider }
+    }
+
+    var aiDependentOpenTaskCount: Int { aiDependentOpenTasks.count }
+
+    func aiDependentOpenTaskCount(for provider: AIDependencyProvider) -> Int {
+        aiDependentOpenTasks(for: provider).count
+    }
+
+    func isTaskHeldByAILimit(_ task: Task) -> Bool {
+        guard let provider = task.aiProvider, isAILimitActive(for: provider) else { return false }
+        return task.aiLimitResumeStatus != nil || task.status == .paused
+    }
+
+    /// Engage a single provider's limit: pause just that assistant's open tasks until its next reset.
+    func engageAILimit(for provider: AIDependencyProvider) {
+        aiLimitHolds[provider] = aiLimitSchedule(for: provider).nextReset(after: .now)
+
+        for context in aiDependentOpenTasks(for: provider) {
+            updateTask(taskID: context.task.id) { task in
+                if task.aiLimitResumeStatus == nil {
+                    task.aiLimitResumeStatus = task.status
+                }
+                task.status = .paused
+            }
+        }
+        persist()
+    }
+
+    /// Release a single provider's hold early, restoring its tasks to their prior status.
+    func clearAILimitHold(for provider: AIDependencyProvider) {
+        aiLimitHolds[provider] = nil
+        for context in taskContexts
+        where context.task.aiProvider == provider && context.task.aiLimitResumeStatus != nil {
+            updateTask(taskID: context.task.id) { task in
+                if let resume = task.aiLimitResumeStatus {
+                    task.status = resume
+                }
+                task.aiLimitResumeStatus = nil
+            }
+        }
+        persist()
     }
 
     /// Called by `FocusOverlayController` when the panel moves or resizes (debounced there).
@@ -1175,7 +1290,8 @@ final class TurboTaskStore: ObservableObject {
         operationID: UUID? = nil,
         startDate: Date? = nil,
         endDate: Date? = nil,
-        subtasks: [TaskSubtask] = []
+        subtasks: [TaskSubtask] = [],
+        aiProvider: AIDependencyProvider? = nil
     ) {
         let task = Task(
             title: title,
@@ -1199,7 +1315,8 @@ final class TurboTaskStore: ObservableObject {
             toolBundleIDs: toolBundleIDs,
             startDate: startDate,
             endDate: endDate,
-            subtasks: subtasks
+            subtasks: subtasks,
+            aiProvider: aiProvider
         )
 
         if let jobID {
@@ -1879,6 +1996,11 @@ final class TurboTaskStore: ObservableObject {
             }
             if let offer = makeMultitaskUpgradeOffer(forActivating: context) {
                 multitaskUpgradeOffer = offer
+                return false
+            }
+            if let provider = context.task.aiProvider, isAILimitActive(for: provider) {
+                let resetLabel = aiLimitHoldUntil(for: provider)?.formatted(date: .omitted, time: .shortened) ?? "the next reset"
+                parallelActiveLimitMessage = "\(provider.title) limit active until \(resetLabel). These tasks stay paused until then."
                 return false
             }
         }
@@ -3591,6 +3713,43 @@ final class TurboTaskStore: ObservableObject {
         persist()
     }
 
+    func releaseAILimitTasksIfNeeded() {
+        var didChange = false
+        var releasedTotal = 0
+        var soonestReset: Date?
+
+        for provider in AIDependencyProvider.allCases {
+            guard let until = aiLimitHolds[provider], until <= .now else { continue }
+            aiLimitHolds[provider] = nil
+            didChange = true
+
+            let held = taskContexts.filter {
+                $0.task.aiProvider == provider && $0.task.aiLimitResumeStatus != nil
+            }
+            for context in held {
+                updateTask(taskID: context.task.id) { task in
+                    if let resume = task.aiLimitResumeStatus {
+                        task.status = resume
+                    }
+                    task.aiLimitResumeStatus = nil
+                }
+            }
+            releasedTotal += held.count
+            if let current = soonestReset {
+                soonestReset = min(current, until)
+            } else {
+                soonestReset = until
+            }
+        }
+
+        guard didChange else { return }
+        persist()
+
+        if releasedTotal > 0, let resetTime = soonestReset {
+            AILimitNotifier.notifyTasksReady(count: releasedTotal, resetTime: resetTime)
+        }
+    }
+
     private func repeatableCompletionDetail(for task: Task) -> String {
         if task.cadence == .kpi {
             let delayText = task.repeatEveryMinutes.map { "Back in \($0)m." }
@@ -3684,7 +3843,9 @@ final class TurboTaskStore: ObservableObject {
             focusOverlayPresenceMode: focusOverlayPresenceMode,
             focusOverlayWindowFrame: focusOverlayWindowFrame,
             trainingWheelsEnabled: trainingWheelsEnabled,
-            typeaheadListNavigationEnabled: typeaheadListNavigationEnabled
+            typeaheadListNavigationEnabled: typeaheadListNavigationEnabled,
+            aiLimitSchedules: aiLimitSchedules,
+            aiLimitHolds: aiLimitHolds
         )
     }
 
@@ -3711,6 +3872,8 @@ final class TurboTaskStore: ObservableObject {
             focusOverlayWindowFrame: snapshot.focusOverlayWindowFrame,
             trainingWheelsEnabled: snapshot.trainingWheelsEnabled,
             typeaheadListNavigationEnabled: snapshot.typeaheadListNavigationEnabled,
+            aiLimitSchedules: snapshot.aiLimitSchedules,
+            aiLimitHolds: snapshot.aiLimitHolds,
             tasksPresentation: snapshot.tasksPresentation,
             persistenceEnabled: true
         )

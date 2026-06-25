@@ -235,11 +235,11 @@ struct ComposerStatusMenuButton: View {
     @Binding var selection: TaskStatus
     var accentColor: Color
 
-    @State private var showPicker = false
+    @State private var isPresented = false
 
     var body: some View {
         Button {
-            showPicker.toggle()
+            isPresented = true
         } label: {
             ZStack {
                 Circle()
@@ -257,41 +257,13 @@ struct ComposerStatusMenuButton: View {
         .help("Status: \(selection.title) · click to change · ⌥⌘1–5")
         .accessibilityLabel("Task status: \(selection.title)")
         .accessibilityHint("Opens status menu")
-        .popover(isPresented: $showPicker, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(TaskStatus.allCases) { option in
-                    Button {
-                        selection = option
-                        showPicker = false
-                    } label: {
-                        HStack(spacing: 10) {
-                            Circle()
-                                .fill(option.accent)
-                                .frame(width: 8, height: 8)
-                            Text(option.title)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(TurboTheme.ink)
-                            Spacer(minLength: 20)
-                            if selection == option {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(TurboTheme.mutedInk)
-                            }
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(selection == option ? TurboTheme.nestedCardFill : .clear)
-                        )
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            TaskStatusPickerPanel(selection: selection, jobColor: accentColor) { status in
+                selection = status
+                isPresented = false
             }
-            .padding(8)
-            .frame(width: 180)
         }
+        .animation(.snappy(duration: 0.12), value: isPresented)
     }
 }
 
@@ -331,6 +303,7 @@ struct TaskComposerView: View {
     @State private var startDate = Date()
     @State private var endDate = Date()
     @State private var subtasks: [TaskSubtask] = []
+    @State private var aiProvider: AIDependencyProvider?
 
     init(
         preferredJobID: UUID?,
@@ -422,6 +395,7 @@ struct TaskComposerView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 energyPill
+                aiProviderPill
                 cadencePill
                 toolsPill
                 subtasksPill
@@ -469,6 +443,36 @@ struct TaskComposerView: View {
                         if energy == option {
                             Image(systemName: "checkmark")
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    private var aiProviderPill: some View {
+        ComposerCapturePill(
+            icon: aiProvider?.symbol ?? "cpu",
+            iconColor: aiProvider?.accent ?? TurboTheme.mutedInk,
+            title: aiProvider?.shortTitle ?? "AI",
+            isActive: aiProvider != nil,
+            helpText: "AI dependency: Claude, Codex, Cursor, or Antigravity"
+        ) {
+            Button {
+                aiProvider = nil
+            } label: {
+                HStack {
+                    Text("None")
+                    if aiProvider == nil { Image(systemName: "checkmark") }
+                }
+            }
+            Divider()
+            ForEach(AIDependencyProvider.allCases) { provider in
+                Button {
+                    aiProvider = provider
+                } label: {
+                    HStack {
+                        Label(provider.title, systemImage: provider.symbol)
+                        if aiProvider == provider { Image(systemName: "checkmark") }
                     }
                 }
             }
@@ -949,7 +953,8 @@ struct TaskComposerView: View {
             operationID: selectedOperationID,
             startDate: hasStartDate ? cal.startOfDay(for: startDate) : nil,
             endDate: hasEndDate ? cal.startOfDay(for: endDate) : nil,
-            subtasks: Task.normalizedSubtasks(subtasks)
+            subtasks: Task.normalizedSubtasks(subtasks),
+            aiProvider: aiProvider
         )
 
         if createMore {

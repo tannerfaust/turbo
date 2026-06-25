@@ -37,6 +37,7 @@ struct TaskEditorDialog: View {
     @State private var planEnd = Date()
     @State private var blockedByTaskIDs: [UUID]
     @State private var subtasks: [TaskSubtask]
+    @State private var aiProvider: AIDependencyProvider?
 
     init(context: TaskContext) {
         self.context = context
@@ -63,6 +64,7 @@ struct TaskEditorDialog: View {
         _planEnd = State(initialValue: context.task.endDate ?? Date())
         _blockedByTaskIDs = State(initialValue: context.task.blockedByTaskIDs)
         _subtasks = State(initialValue: context.task.subtasks)
+        _aiProvider = State(initialValue: context.task.aiProvider)
     }
 
     var body: some View {
@@ -138,6 +140,7 @@ struct TaskEditorDialog: View {
 
             FlowLayout(spacing: 6) {
                 energyPill
+                aiProviderPill
                 cadencePill
                 toolsPill
                 subtasksPill
@@ -207,6 +210,36 @@ struct TaskEditorDialog: View {
                     HStack {
                         Text(option.title)
                         if energy == option { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+        }
+    }
+
+    private var aiProviderPill: some View {
+        ComposerCapturePill(
+            icon: aiProvider?.symbol ?? "cpu",
+            iconColor: aiProvider?.accent ?? TurboTheme.mutedInk,
+            title: aiProvider?.shortTitle ?? "AI",
+            isActive: aiProvider != nil,
+            helpText: "AI dependency: Claude, Codex, Cursor, or Antigravity"
+        ) {
+            Button {
+                aiProvider = nil
+            } label: {
+                HStack {
+                    Text("None")
+                    if aiProvider == nil { Image(systemName: "checkmark") }
+                }
+            }
+            Divider()
+            ForEach(AIDependencyProvider.allCases) { provider in
+                Button {
+                    aiProvider = provider
+                } label: {
+                    HStack {
+                        Label(provider.title, systemImage: provider.symbol)
+                        if aiProvider == provider { Image(systemName: "checkmark") }
                     }
                 }
             }
@@ -612,6 +645,7 @@ struct TaskEditorDialog: View {
             task.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             task.summary = notes.trimmingCharacters(in: .whitespacesAndNewlines)
             task.toolBundleIDs = Task.normalizedToolBundleIDs(toolBundleIDs)
+            task.aiProvider = aiProvider
             task.energy = energy
             task.cadence = cadence
             task.priority = 3

@@ -92,6 +92,75 @@ extension View {
         .clipShape(Capsule())
         .overlay(Capsule().stroke(TurboTheme.cardStroke.opacity(0.85), lineWidth: 1))
     }
+
+    /// Unified "liquid glass" toolbar control surface. Every header control
+    /// (view menu, AI, new task) shares this so they read as one family.
+    func glassControlChrome(
+        active: Bool = false,
+        tint: Color? = nil,
+        height: CGFloat = 30,
+        horizontalPadding: CGFloat = 11
+    ) -> some View {
+        modifier(GlassControlChrome(
+            active: active,
+            tint: tint,
+            height: height,
+            horizontalPadding: horizontalPadding
+        ))
+    }
+}
+
+/// Soft, translucent rounded-rect chrome with a top sheen — the shared look
+/// for compact toolbar controls across the app.
+struct GlassControlChrome: ViewModifier {
+    var active: Bool
+    var tint: Color?
+    var height: CGFloat
+    var horizontalPadding: CGFloat
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+    }
+
+    private var fillColor: Color {
+        if let tint { return tint.opacity(active ? 0.24 : 0.15) }
+        return TurboTheme.nestedCardFill.opacity(active ? 1 : 0.9)
+    }
+
+    private var strokeColor: Color {
+        if let tint { return tint.opacity(active ? 0.6 : 0.42) }
+        return TurboTheme.cardStroke.opacity(0.95)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .frame(height: height)
+            .padding(.horizontal, horizontalPadding)
+            .background {
+                shape.fill(.ultraThinMaterial)
+            }
+            .background {
+                shape.fill(fillColor)
+            }
+            .overlay {
+                // Hairline top sheen for the glass read.
+                shape
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.14), Color.clear],
+                            startPoint: .top,
+                            endPoint: .center
+                        ),
+                        lineWidth: 1
+                    )
+                    .blendMode(.plusLighter)
+            }
+            .overlay {
+                shape.stroke(strokeColor, lineWidth: 1)
+            }
+            .clipShape(shape)
+            .contentShape(shape)
+    }
 }
 
 struct TurboMetricPill: View {

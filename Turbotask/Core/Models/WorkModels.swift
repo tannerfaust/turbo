@@ -84,6 +84,117 @@ enum AppThemeMode: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+// MARK: - AI dependency & limits
+
+enum AIDependencyProvider: String, CaseIterable, Identifiable, Hashable, Codable {
+    case claude
+    case codex
+    case cursor
+    case antigravity
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .claude: "Claude"
+        case .codex: "Codex"
+        case .cursor: "Cursor"
+        case .antigravity: "Antigravity"
+        }
+    }
+
+    var shortTitle: String { title }
+
+    var symbol: String {
+        switch self {
+        case .claude: "sparkles"
+        case .codex: "terminal.fill"
+        case .cursor: "cursorarrow.rays"
+        case .antigravity: "arrow.triangle.2.circlepath"
+        }
+    }
+
+    /// Brand-leaning accent for each assistant.
+    var accent: Color {
+        switch self {
+        case .claude: Color(red: 0.91, green: 0.49, blue: 0.22)      // orange
+        case .codex: Color(red: 0.52, green: 0.45, blue: 0.96)       // blue / purple
+        case .cursor: Color(red: 0.62, green: 0.64, blue: 0.70)      // neutral
+        case .antigravity: Color(red: 0.20, green: 0.70, blue: 0.74) // green / blue
+        }
+    }
+
+    /// Candidate desktop-app bundle IDs in priority order; the first installed one
+    /// supplies the real app icon (falls back to `symbol` when none is present).
+    var bundleIdentifiers: [String] {
+        switch self {
+        case .claude: ["com.anthropic.claudefordesktop", "com.anthropic.claude"]
+        case .codex: ["com.openai.codex"]
+        case .cursor: ["com.todesktop.230313mzl4w4u92"]
+        case .antigravity: ["com.google.antigravity"]
+        }
+    }
+}
+
+struct AILimitSchedule: Hashable, Codable, Equatable {
+    var resetHour: Int
+    var resetMinute: Int
+    /// Calendar weekday indices (1 = Sunday … 7 = Saturday). Empty means every day.
+    var resetWeekdays: [Int]
+
+    init(resetHour: Int = 9, resetMinute: Int = 0, resetWeekdays: [Int] = []) {
+        self.resetHour = min(23, max(0, resetHour))
+        self.resetMinute = min(59, max(0, resetMinute))
+        self.resetWeekdays = resetWeekdays
+    }
+
+    func nextReset(after date: Date = .now, calendar: Calendar = .current) -> Date {
+        let activeWeekdays = effectiveWeekdays
+        let startDay = calendar.startOfDay(for: date)
+
+        for dayOffset in 0..<14 {
+            guard let day = calendar.date(byAdding: .day, value: dayOffset, to: startDay) else { continue }
+            let weekday = calendar.component(.weekday, from: day)
+            guard activeWeekdays.contains(weekday) else { continue }
+
+            var components = calendar.dateComponents([.year, .month, .day], from: day)
+            components.hour = resetHour
+            components.minute = resetMinute
+            components.second = 0
+            guard let candidate = calendar.date(from: components) else { continue }
+            if candidate > date { return candidate }
+        }
+
+        return calendar.date(byAdding: .day, value: 1, to: date) ?? date.addingTimeInterval(86_400)
+    }
+
+    func resetTimeLabel(calendar: Calendar = .current) -> String {
+        var components = DateComponents()
+        components.hour = resetHour
+        components.minute = resetMinute
+        guard let date = calendar.date(from: components) else {
+            return String(format: "%02d:%02d", resetHour, resetMinute)
+        }
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    func weekdaySummary(calendar: Calendar = .current) -> String {
+        let active = effectiveWeekdays.sorted()
+        if active.count == 7 { return "Every day" }
+        let symbols = calendar.shortWeekdaySymbols
+        let labels = active.compactMap { weekday -> String? in
+            guard weekday >= 1, weekday <= symbols.count else { return nil }
+            return String(symbols[weekday - 1].prefix(1))
+        }
+        return labels.joined(separator: " · ")
+    }
+
+    private var effectiveWeekdays: Set<Int> {
+        if resetWeekdays.isEmpty { return Set(1...7) }
+        return Set(resetWeekdays.filter { (1...7).contains($0) })
+    }
+}
+
 enum JobPalette: String, CaseIterable, Identifiable, Hashable, Codable {
     case forest
     case ocean
@@ -403,6 +514,10 @@ struct Task: Identifiable, Hashable, Codable {
     var blockedByTaskIDs: [UUID]
     /// Small checklist items that live inside the parent task.
     var subtasks: [TaskSubtask]
+    /// When set, this task depends on a specific AI tool/model quota.
+    var aiProvider: AIDependencyProvider?
+    /// Status to restore when an AI limit hold ends.
+    var aiLimitResumeStatus: TaskStatus?
 
     init(
         id: UUID = UUID(),
@@ -431,7 +546,9 @@ struct Task: Identifiable, Hashable, Codable {
         isArchived: Bool = false,
         archivedAt: Date? = nil,
         blockedByTaskIDs: [UUID] = [],
-        subtasks: [TaskSubtask] = []
+        subtasks: [TaskSubtask] = [],
+        aiProvider: AIDependencyProvider? = nil,
+        aiLimitResumeStatus: TaskStatus? = nil
     ) {
         self.id = id
         self.title = title
@@ -460,6 +577,8 @@ struct Task: Identifiable, Hashable, Codable {
         self.archivedAt = archivedAt
         self.blockedByTaskIDs = Task.normalizedBlockedByTaskIDs(blockedByTaskIDs, for: id)
         self.subtasks = Task.normalizedSubtasks(subtasks)
+        self.aiProvider = aiProvider
+        self.aiLimitResumeStatus = aiLimitResumeStatus
     }
 
     enum CodingKeys: String, CodingKey {
@@ -491,6 +610,8 @@ struct Task: Identifiable, Hashable, Codable {
         case archivedAt
         case blockedByTaskIDs
         case subtasks
+        case aiProvider
+        case aiLimitResumeStatus
     }
 
     static let maxDependenciesPerTask = 24
@@ -567,6 +688,8 @@ struct Task: Identifiable, Hashable, Codable {
             for: id
         )
         subtasks = Task.normalizedSubtasks(try container.decodeIfPresent([TaskSubtask].self, forKey: .subtasks) ?? [])
+        aiProvider = try container.decodeIfPresent(AIDependencyProvider.self, forKey: .aiProvider)
+        aiLimitResumeStatus = try container.decodeIfPresent(TaskStatus.self, forKey: .aiLimitResumeStatus)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -598,6 +721,8 @@ struct Task: Identifiable, Hashable, Codable {
         try container.encodeIfPresent(archivedAt, forKey: .archivedAt)
         try container.encode(blockedByTaskIDs, forKey: .blockedByTaskIDs)
         try container.encode(subtasks, forKey: .subtasks)
+        try container.encodeIfPresent(aiProvider, forKey: .aiProvider)
+        try container.encodeIfPresent(aiLimitResumeStatus, forKey: .aiLimitResumeStatus)
     }
 
     /// Copies every mutable field from `other` onto `self` (same `id` required). Used for ⌘Z undo.
@@ -629,6 +754,8 @@ struct Task: Identifiable, Hashable, Codable {
         archivedAt = other.archivedAt
         blockedByTaskIDs = other.blockedByTaskIDs
         subtasks = other.subtasks
+        aiProvider = other.aiProvider
+        aiLimitResumeStatus = other.aiLimitResumeStatus
     }
 
     /// `true` when the task is not done and the calendar day is past the end date.
@@ -875,6 +1002,21 @@ enum TaskStatus: String, CaseIterable, Identifiable, Hashable, Codable {
             Color(red: 1.0, green: 0.52, blue: 0.08)
         case .done:
             Color(red: 0.0, green: 0.70, blue: 0.64)
+        }
+    }
+
+    var menuSymbol: String {
+        switch self {
+        case .queued:
+            "circle"
+        case .active:
+            "play.fill"
+        case .waiting:
+            "hourglass"
+        case .paused:
+            "pause.fill"
+        case .done:
+            "checkmark.circle.fill"
         }
     }
 }
