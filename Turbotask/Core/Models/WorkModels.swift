@@ -898,17 +898,13 @@ enum TaskEnergy: String, CaseIterable, Identifiable, Hashable, Codable {
     }
 
     var accent: Color {
+        // Neutral by design — the labels (Deep, Shallow, MT-2…) carry the meaning,
+        // so type tags stay on the grayscale palette. Deep Focus reads strongest.
         switch self {
         case .deepFocus:
-            Color(red: 0.12, green: 0.38, blue: 1.0)
-        case .shallowWork:
-            Color(red: 0.98, green: 0.72, blue: 0.08)
-        case .multitask2:
-            Color(red: 0.0, green: 0.82, blue: 0.88)
-        case .multitask3:
-            Color(red: 0.94, green: 0.22, blue: 0.62)
-        case .multitask4:
-            Color(red: 0.45, green: 0.92, blue: 0.18)
+            TurboTheme.ink
+        case .shallowWork, .multitask2, .multitask3, .multitask4:
+            TurboTheme.mutedInk
         }
     }
 
@@ -1096,7 +1092,7 @@ struct TasksPresentationState: Hashable, Codable {
     var visibleFields: Set<TaskVisibleField>
 
     init(
-        viewMode: TaskViewMode = .table,
+        viewMode: TaskViewMode = .kanban,
         visibleFields: Set<TaskVisibleField> = Self.defaultVisibleFields
     ) {
         self.viewMode = viewMode
@@ -1121,7 +1117,7 @@ struct TasksPresentationState: Hashable, Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        viewMode = try container.decodeIfPresent(TaskViewMode.self, forKey: .viewMode) ?? .table
+        viewMode = try container.decodeIfPresent(TaskViewMode.self, forKey: .viewMode) ?? .kanban
         if let raw = try container.decodeIfPresent([String].self, forKey: .visibleFields) {
             let parsed = Set(raw.compactMap { TaskVisibleField(rawValue: $0) })
             visibleFields = parsed.isEmpty ? Self.defaultVisibleFields : parsed

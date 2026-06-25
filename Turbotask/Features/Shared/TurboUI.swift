@@ -7,6 +7,20 @@
 
 import SwiftUI
 
+/// Leading inset screens reserve so edge-to-edge horizontal scrollers can rest clear
+/// of the sidebar. The docked sidebar handles its own layout, so this defaults to 0;
+/// it stays defined here for screens that read it.
+private struct SidebarLeadingInsetKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    var sidebarLeadingInset: CGFloat {
+        get { self[SidebarLeadingInsetKey.self] }
+        set { self[SidebarLeadingInsetKey.self] = newValue }
+    }
+}
+
 struct TurboPageHeader: View {
     let title: String
     let trailing: AnyView?

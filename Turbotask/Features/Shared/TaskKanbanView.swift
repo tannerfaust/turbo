@@ -83,6 +83,13 @@ struct TaskKanbanBoard: View {
     let tasks: [TaskContext]
     let mode: TaskKanbanBoardMode
     let onEditTask: (TaskContext) -> Void
+    /// Padding the parent applies on the leading/trailing edges. The board reclaims it
+    /// so the horizontal scroller runs all the way to the true window edges — columns
+    /// scroll under the translucent sidebar (leading) and off the window edge (trailing)
+    /// instead of being clipped by an opaque inset band. Columns still rest in place
+    /// because the same amount is restored as inner content padding.
+    var leadingBleed: CGFloat = 0
+    var trailingBleed: CGFloat = 0
 
     private var revealedOptionalStatuses: Set<TaskStatus> {
         Set(
@@ -126,9 +133,13 @@ struct TaskKanbanBoard: View {
                         }
                     }
                     .padding(.vertical, 2)
-                    .padding(.horizontal, 2)
+                    .padding(.leading, max(2, leadingBleed))
+                    .padding(.trailing, max(2, trailingBleed))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.leading, -leadingBleed)
+                .padding(.trailing, -trailingBleed)
+                .mask(horizontalEdgeFade)
             }
         }
         .transaction { transaction in
@@ -168,6 +179,27 @@ struct TaskKanbanBoard: View {
                     .padding(.bottom, 8)
                     .transition(.opacity)
             }
+        }
+    }
+
+    /// A small soft fade right at the true window edges so columns dissolve at the
+    /// rounded corners instead of a hard clip. Kept narrow on purpose — content that
+    /// slides under the translucent sidebar should stay readable through the glass,
+    /// not fade out.
+    private var horizontalEdgeFade: some View {
+        GeometryReader { geo in
+            let width = max(geo.size.width, 1)
+            let fade = min(14, width / 2) / width
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: fade),
+                    .init(color: .black, location: 1 - fade),
+                    .init(color: .clear, location: 1)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
         }
     }
 

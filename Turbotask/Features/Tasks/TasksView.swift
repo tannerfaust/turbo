@@ -68,6 +68,7 @@ private struct TasksProjectSectionKey: Hashable {
 
 struct TasksView: View {
     @EnvironmentObject private var store: TurboTaskStore
+    @Environment(\.sidebarLeadingInset) private var sidebarInset
     @State private var lens: TasksHubLens = .all
     @State private var editingTask: TaskContext?
     @State private var tasksKeyMonitor: Any?
@@ -125,7 +126,9 @@ struct TasksView: View {
                     TaskKanbanBoard(
                         tasks: filteredTasks,
                         mode: .registry,
-                        onEditTask: { editingTask = $0 }
+                        onEditTask: { editingTask = $0 },
+                        leadingBleed: sidebarInset + 28,
+                        trailingBleed: 28
                     )
                     .environmentObject(store)
                 } else {
@@ -134,7 +137,8 @@ struct TasksView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(.horizontal, 28)
+        .padding(.leading, sidebarInset + 28)
+        .padding(.trailing, 28)
         .padding(.vertical, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(TurboTheme.background)

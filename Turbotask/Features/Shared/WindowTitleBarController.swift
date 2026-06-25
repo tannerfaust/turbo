@@ -28,6 +28,15 @@ struct WindowTitleBarController: NSViewRepresentable {
 
     private func apply(to window: NSWindow?) {
         guard let window else { return }
+
+        // Full-size content + transparent titlebar so the floating glass sidebar can
+        // run all the way to the top behind the traffic lights, and content can sit
+        // under the titlebar. Applied idempotently every update.
+        window.styleMask.insert(.fullSizeContentView)
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = false
+        window.titlebarSeparatorStyle = .none
+
         if isHidden {
             window.titleVisibility = .hidden
             window.title = ""

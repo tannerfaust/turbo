@@ -125,7 +125,7 @@ export function defaultWorkspace(): WorkspaceSnapshot {
     doneTaskAutoArchiveAfterDays: 0,
     archivedTaskPurgeAfterDays: 0,
     tasksPresentation: {
-      viewMode: "table",
+      viewMode: "kanban",
       visibleFields: ["energy", "estimate", "nextStep", "now", "priority", "progress", "project", "status"]
     },
     themeMode: "system",

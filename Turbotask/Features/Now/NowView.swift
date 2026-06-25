@@ -50,9 +50,10 @@ private final class NowKeyboardGate {
 
 struct NowView: View {
     @EnvironmentObject private var store: TurboTaskStore
+    @Environment(\.sidebarLeadingInset) private var sidebarInset
 
     @AppStorage("now_list_grouping_mode") private var listGroupingRawValue = NowListGroupingMode.none.rawValue
-    @State private var viewMode: NowBoardMode = .list
+    @State private var viewMode: NowBoardMode = .kanban
     @State private var editingTask: TaskContext?
     @State private var keyboardGate = NowKeyboardGate()
     @State private var localKeyMonitor: Any?
@@ -143,7 +144,9 @@ struct NowView: View {
                             TaskKanbanBoard(
                                 tasks: scoped,
                                 mode: .now,
-                                onEditTask: { editingTask = $0 }
+                                onEditTask: { editingTask = $0 },
+                                leadingBleed: sidebarInset + 28,
+                                trailingBleed: 28
                             )
                             .environmentObject(store)
                             .frame(minHeight: 420)
@@ -157,7 +160,8 @@ struct NowView: View {
                             .environmentObject(store)
                         }
                     }
-                    .padding(.horizontal, 28)
+                    .padding(.leading, sidebarInset + 28)
+                    .padding(.trailing, 28)
                     .padding(.vertical, 16)
                 }
                 .coordinateSpace(name: NowScrollSpace.name)

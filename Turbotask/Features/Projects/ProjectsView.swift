@@ -2,7 +2,7 @@
 //  ProjectsView.swift
 //  Turbotask
 //
-//  Portfolio layout: job rail · project tiles · inspector (distinct from Now + Tasks).
+//  Two-pane portfolio: field pill · project rows · detail. Matches the Operations tab.
 //
 
 import AppKit
@@ -24,6 +24,21 @@ private struct TaskDateEditPayload: Identifiable {
     }
 }
 
+// MARK: - Control surface helper
+
+private extension View {
+    func portfolioControlSurface(cornerRadius: CGFloat = 8) -> some View {
+        background(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(TurboTheme.nestedCardFill)
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(TurboTheme.cardStroke.opacity(0.9), lineWidth: 1)
+                )
+        )
+    }
+}
+
 // MARK: - Root
 
 struct ProjectsView: View {
@@ -33,6 +48,7 @@ struct ProjectsView: View {
     @State private var editingTask: TaskContext?
     @State private var dateEditPayload: TaskDateEditPayload?
     @State private var pendingDeleteProject: ProjectContext?
+    @State private var showFieldEditor = false
     @StateObject private var projectGridHighlight = TypeaheadRowHighlight()
     @State private var projectsKeyboardToken = ProjectsKeyboardMonitorToken()
 
@@ -65,32 +81,18 @@ struct ProjectsView: View {
         return match
     }
 
+    private var focusedJob: Job? {
+        focusedJobID.flatMap { id in store.jobs.first(where: { $0.id == id }) }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            portfolioHeader
-
-            HStack(alignment: .top, spacing: 0) {
-                jobsRail
-                    .frame(width: 216)
-
-                Rectangle()
-                    .fill(TurboTheme.cardStroke.opacity(0.35))
-                    .frame(width: 1)
-
-                projectCanvas
-                    .frame(minWidth: 280, maxWidth: .infinity)
-
-                Rectangle()
-                    .fill(TurboTheme.cardStroke.opacity(0.35))
-                    .frame(width: 1)
-
-                inspectorColumn
-                    .frame(width: 308)
-            }
-            .frame(maxHeight: .infinity)
+        VStack(alignment: .leading, spacing: 14) {
+            toolbar
+            content
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(TurboTheme.background)
         .alert("Delete project?", isPresented: Binding(
@@ -169,200 +171,245 @@ struct ProjectsView: View {
         }
     }
 
-    // MARK: Header
+    // MARK: Toolbar
 
-    private var portfolioHeader: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("PORTFOLIO")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(TurboTheme.mutedInk)
-                    .tracking(1.05)
-                Text("Projects by field")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(TurboTheme.ink)
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            fieldSelector
+            if focusedJobID != nil {
+                fieldAppearanceButton
             }
-
-            Spacer(minLength: 12)
-
-            HStack(spacing: 10) {
-                IdentifiedTextField(
-                    identifier: TypeaheadFieldID.projectsRailSearch,
-                    text: Binding(
-                        get: { store.projectsQuery.search },
-                        set: { val in _Concurrency.Task { @MainActor in store.projectsQuery.search = val } }
-                    ),
-                    placeholder: "Filter projects…"
-                )
-                .frame(height: 24)
-                .frame(maxWidth: 280)
-
-                Picker("Sort", selection: Binding(
-                    get: { store.projectsQuery.sort },
-                    set: { val in _Concurrency.Task { @MainActor in store.projectsQuery.sort = val } }
-                )) {
-                    ForEach(TurboTaskStore.ProjectSortOption.allCases) { opt in
-                        Text(opt.title).tag(opt)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(minWidth: 118)
-
-                if let jid = focusedJobID {
-                    Button("New project") {
-                        store.openNewProject(preferredJobID: jid)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(TurboTheme.ink)
-                    .trainingWheelsTooltip("New project on the selected field · ⌘⇧P")
-                }
-            }
-
-        }
-        .padding(.bottom, 16)
-    }
-
-    // MARK: Jobs rail
-
-    private var jobsRail: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Fields")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(TurboTheme.mutedInk)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-
+            searchField
+            Spacer(minLength: 8)
+            sortMenu
             if let jid = focusedJobID {
-                FieldAppearanceEditor(jobID: jid, titleFont: .subheadline.weight(.semibold))
-                    .environmentObject(store)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
-            }
-
-            List {
-                ForEach(store.jobs) { job in
-                    PortfolioJobRow(
-                        job: job,
-                        projectCount: store.projectCount(jobID: job.id),
-                        isSelected: focusedJobID == job.id
-                    ) {
-                        focusedJobID = job.id
-                    }
-                    .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                Button {
+                    store.openNewProject(preferredJobID: jid)
+                } label: {
+                    Label("New project", systemImage: "plus")
+                        .font(.system(size: 13, weight: .semibold))
                 }
-                .onMove { source, destination in
-                    store.moveJobs(fromOffsets: source, toOffset: destination)
-                }
+                .buttonStyle(.borderedProminent)
+                .tint(TurboTheme.ink)
+                .trainingWheelsTooltip("New project on the selected field · ⌘⇧P")
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .padding(.horizontal, 4)
         }
-        .padding(.vertical, 8)
-        .background(TurboTheme.nestedCardFill.opacity(0.35))
     }
 
-    // MARK: Project tiles
-
-    private var projectCanvas: some View {
-        VStack(alignment: .leading, spacing: 0) {
+    private var fieldSelector: some View {
+        Menu {
+            ForEach(store.jobs) { job in
+                Button {
+                    focusedJobID = job.id
+                } label: {
+                    Label {
+                        Text("\(job.title)  ·  \(store.projectCount(jobID: job.id))")
+                    } icon: {
+                        Image(systemName: focusedJobID == job.id ? "checkmark" : "circle.fill")
+                    }
+                }
+            }
             if store.jobs.isEmpty {
+                Button("New field…") { store.openComposer(.job) }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(focusedJob?.palette.color ?? TurboTheme.mutedInk)
+                    .frame(width: 8, height: 8)
+                Text(focusedJob?.title ?? "Choose field")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(TurboTheme.ink)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(TurboTheme.mutedInk)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .padding(.horizontal, 11)
+        .frame(height: 30)
+        .portfolioControlSurface()
+    }
+
+    private var fieldAppearanceButton: some View {
+        Button {
+            showFieldEditor = true
+        } label: {
+            Image(systemName: "pencil")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(TurboTheme.mutedInk)
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plain)
+        .portfolioControlSurface()
+        .help("Rename field & change accent color")
+        .popover(isPresented: $showFieldEditor, arrowEdge: .bottom) {
+            if let jid = focusedJobID {
+                FieldAppearanceEditor(jobID: jid, showsSummary: true)
+                    .environmentObject(store)
+                    .padding(16)
+                    .frame(width: 280)
+            }
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(TurboTheme.mutedInk)
+            TextField("Search projects", text: Binding(
+                get: { store.projectsQuery.search },
+                set: { val in _Concurrency.Task { @MainActor in store.projectsQuery.search = val } }
+            ))
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .foregroundStyle(TurboTheme.ink)
+            if !projectSearchIsEmpty {
+                Button {
+                    _Concurrency.Task { @MainActor in store.projectsQuery.search = "" }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(TurboTheme.mutedInk)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .frame(maxWidth: 260)
+        .portfolioControlSurface()
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(TurboTaskStore.ProjectSortOption.allCases) { opt in
+                Button {
+                    _Concurrency.Task { @MainActor in store.projectsQuery.sort = opt }
+                } label: {
+                    Label(opt.title, systemImage: store.projectsQuery.sort == opt ? "checkmark" : sortSymbol(opt))
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(TurboTheme.mutedInk)
+                .frame(width: 30, height: 30)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .portfolioControlSurface()
+        .help("Sort projects")
+    }
+
+    private func sortSymbol(_ opt: TurboTaskStore.ProjectSortOption) -> String {
+        switch opt {
+        case .manual: return "line.3.horizontal"
+        case .openTasks: return "chart.bar"
+        case .completion: return "checkmark.circle"
+        case .title: return "textformat.abc"
+        }
+    }
+
+    // MARK: Content
+
+    @ViewBuilder
+    private var content: some View {
+        if store.jobs.isEmpty {
+            VStack {
                 TurboEmptyState(
                     title: "Create a field first.",
                     actionTitle: "New field",
                     action: { store.openComposer(.job) }
                 )
-            } else if focusedJobID == nil {
-                contentPlaceholder("Pick a field on the left.")
-            } else if projectsInJob.isEmpty {
-                contentPlaceholder("No projects in this field yet.")
-            } else {
-                ScrollViewReader { proxy in
-                    Group {
-                        if store.projectsQuery.sort == .manual {
-                            List {
-                                ForEach(Array(projectsInJob.enumerated()), id: \.element.project.id) { index, ctx in
-                                    PortfolioProjectTile(
-                                        context: ctx,
-                                        isSelected: store.selectedProjectID == ctx.project.id,
-                                        isTypeaheadFocus: index == projectGridHighlight.index
-                                            && TypeaheadListKeyboard.firstResponderMatchesFieldID(TypeaheadFieldID.projectsRailSearch),
-                                        onSelect: {
-                                            store.select(.project(jobID: ctx.jobID, projectID: ctx.project.id))
-                                            _Concurrency.Task { @MainActor in
-                                                projectGridHighlight.index = index
-                                            }
-                                        },
-                                        onRequestDelete: { pendingDeleteProject = ctx }
-                                    )
-                                    .listRowInsets(EdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10))
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                                    .id(ctx.project.id)
+                Spacer()
+            }
+        } else {
+            HStack(alignment: .top, spacing: 0) {
+                projectList
+                    .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
+                Rectangle()
+                    .fill(TurboTheme.divider.opacity(0.6))
+                    .frame(width: 1)
+                inspector
+                    .frame(width: 340)
+                    .frame(maxHeight: .infinity)
+            }
+            .frame(maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var projectList: some View {
+        if focusedJobID == nil {
+            placeholder("Pick a field above.")
+        } else if projectsInJob.isEmpty {
+            VStack(spacing: 12) {
+                Image(systemName: "folder")
+                    .font(.system(size: 24, weight: .light))
+                    .foregroundStyle(TurboTheme.mutedInk.opacity(0.6))
+                Text(projectSearchIsEmpty ? "No projects in this field yet." : "No projects match your search.")
+                    .font(.subheadline)
+                    .foregroundStyle(TurboTheme.mutedInk)
+                if projectSearchIsEmpty, let jid = focusedJobID {
+                    Button("New project") { store.openNewProject(preferredJobID: jid) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollViewReader { proxy in
+                List {
+                    ForEach(Array(projectsInJob.enumerated()), id: \.element.project.id) { index, ctx in
+                        PortfolioProjectRow(
+                            context: ctx,
+                            isSelected: store.selectedProjectID == ctx.project.id,
+                            isTypeaheadFocus: index == projectGridHighlight.index
+                                && TypeaheadListKeyboard.firstResponderMatchesFieldID(TypeaheadFieldID.projectsRailSearch),
+                            onSelect: {
+                                store.select(.project(jobID: ctx.jobID, projectID: ctx.project.id))
+                                _Concurrency.Task { @MainActor in
+                                    projectGridHighlight.index = index
                                 }
-                                .onMove { source, destination in
-                                    guard projectSearchIsEmpty, let jid = focusedJobID else { return }
-                                    store.moveProjects(jobID: jid, fromOffsets: source, toOffset: destination)
-                                }
-                            }
-                            .listStyle(.plain)
-                            .scrollContentBackground(.hidden)
-                            .padding(.vertical, 4)
-                        } else {
-                            ScrollView {
-                                LazyVGrid(
-                                    columns: [
-                                        GridItem(.adaptive(minimum: 200, maximum: 320), spacing: 12, alignment: .top)
-                                    ],
-                                    alignment: .leading,
-                                    spacing: 12
-                                ) {
-                                    ForEach(Array(projectsInJob.enumerated()), id: \.element.project.id) { index, ctx in
-                                        PortfolioProjectTile(
-                                            context: ctx,
-                                            isSelected: store.selectedProjectID == ctx.project.id,
-                                            isTypeaheadFocus: index == projectGridHighlight.index
-                                                && TypeaheadListKeyboard.firstResponderMatchesFieldID(TypeaheadFieldID.projectsRailSearch),
-                                            onSelect: {
-                                                store.select(.project(jobID: ctx.jobID, projectID: ctx.project.id))
-                                                _Concurrency.Task { @MainActor in
-                                                    projectGridHighlight.index = index
-                                                }
-                                            },
-                                            onRequestDelete: { pendingDeleteProject = ctx }
-                                        )
-                                        .id(ctx.project.id)
-                                    }
-                                }
-                                .padding(12)
-                            }
-                        }
+                            },
+                            onRequestDelete: { pendingDeleteProject = ctx }
+                        )
+                        .listRowInsets(EdgeInsets(top: 3, leading: 0, bottom: 3, trailing: 12))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .id(ctx.project.id)
                     }
-                    .onReceive(projectGridHighlight.$index) { idx in
-                        guard projectsInJob.indices.contains(idx) else { return }
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            proxy.scrollTo(projectsInJob[idx].project.id, anchor: .center)
-                        }
+                    .onMove { source, destination in
+                        guard store.projectsQuery.sort == .manual,
+                              projectSearchIsEmpty,
+                              let jid = focusedJobID else { return }
+                        store.moveProjects(jobID: jid, fromOffsets: source, toOffset: destination)
                     }
-                    .onChange(of: store.selectedProjectID) { _, newID in
-                        guard let pid = newID,
-                              let idx = projectsInJob.firstIndex(where: { $0.project.id == pid }) else { return }
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            proxy.scrollTo(pid, anchor: .center)
-                        }
-                        _Concurrency.Task { @MainActor in
-                            projectGridHighlight.index = idx
-                        }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .padding(.trailing, 12)
+                .onChange(of: store.selectedProjectID) { _, newID in
+                    guard let pid = newID,
+                          let idx = projectsInJob.firstIndex(where: { $0.project.id == pid }) else { return }
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo(pid, anchor: .center)
+                    }
+                    _Concurrency.Task { @MainActor in
+                        projectGridHighlight.index = idx
                     }
                 }
             }
         }
-        .background(TurboTheme.nestedCardFill.opacity(0.2))
     }
 
-    private func contentPlaceholder(_ text: String) -> some View {
+    private func placeholder(_ text: String) -> some View {
         Text(text)
             .font(.subheadline)
             .foregroundStyle(TurboTheme.mutedInk)
@@ -370,34 +417,28 @@ struct ProjectsView: View {
             .padding(24)
     }
 
-    // MARK: Inspector
-
-    private var inspectorColumn: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Detail")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(TurboTheme.mutedInk)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-
-            if let ctx = selectedContext {
-                PortfolioInspector(
-                    context: ctx,
-                    onEditDates: { t in dateEditPayload = TaskDateEditPayload(context: t) },
-                    onEditTask: { editingTask = $0 },
-                    onRequestDeleteProject: { pendingDeleteProject = ctx }
-                )
-                .environmentObject(store)
-            } else {
-                Text("Select a project tile.")
-                    .font(.caption)
+    @ViewBuilder
+    private var inspector: some View {
+        if let ctx = selectedContext {
+            PortfolioInspector(
+                context: ctx,
+                onEditDates: { t in dateEditPayload = TaskDateEditPayload(context: t) },
+                onEditTask: { editingTask = $0 },
+                onRequestDeleteProject: { pendingDeleteProject = ctx }
+            )
+            .environmentObject(store)
+            .padding(.leading, 18)
+        } else {
+            VStack(spacing: 6) {
+                Text("Select a project")
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(TurboTheme.mutedInk)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                    .padding(16)
+                Text("Pick one on the left to see its tasks.")
+                    .font(.caption)
+                    .foregroundStyle(TurboTheme.mutedInk.opacity(0.7))
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(.vertical, 8)
-        .background(TurboTheme.nestedCardFill.opacity(0.35))
     }
 
     private func syncSelectionToJob() {
@@ -616,100 +657,68 @@ private enum ProjectsViewKeyRouting {
     }
 }
 
-// MARK: - Job row
+// MARK: - Project row
 
-private struct PortfolioJobRow: View {
-    let job: Job
-    let projectCount: Int
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(job.palette.color)
-                    .frame(width: 4, height: 36)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(job.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(TurboTheme.ink)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    Text("\(projectCount) projects")
-                        .font(.caption2)
-                        .foregroundStyle(TurboTheme.mutedInk)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? TurboTheme.accentSoft.opacity(0.55) : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(isSelected ? job.palette.color.opacity(0.35) : Color.clear, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Project tile
-
-private struct PortfolioProjectTile: View {
+private struct PortfolioProjectRow: View {
     let context: ProjectContext
     let isSelected: Bool
     var isTypeaheadFocus: Bool = false
     let onSelect: () -> Void
     let onRequestDelete: () -> Void
 
+    private var percent: Int { Int((context.completionPercent * 100).rounded()) }
+
     var body: some View {
         Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 8) {
-                    Text(context.project.displayTitle)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(TurboTheme.ink)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("\(Int((context.completionPercent * 100).rounded()))%")
-                        .font(.caption2.weight(.bold).monospacedDigit())
-                        .foregroundStyle(TurboTheme.mutedInk)
+            HStack(spacing: 0) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(isSelected ? context.jobColor : context.jobColor.opacity(0.45))
+                    .frame(width: 3)
+                    .frame(maxHeight: .infinity)
+                    .padding(.vertical, 2)
+
+                HStack(spacing: 10) {
+                    if !context.project.iconEmoji.isEmpty {
+                        Text(context.project.iconEmoji)
+                            .font(.system(size: 15))
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(context.project.title)
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(TurboTheme.ink)
+                            .lineLimit(1)
+                        if !context.project.outcome.isEmpty {
+                            Text(context.project.outcome)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(TurboTheme.mutedInk)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Spacer(minLength: 10)
+
+                    VStack(alignment: .trailing, spacing: 5) {
+                        Text("\(percent)%")
+                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                            .foregroundStyle(percent > 0 ? TurboTheme.ink : TurboTheme.mutedInk)
+                        TurboProgressBar(value: context.completionPercent, tint: context.jobColor)
+                            .frame(width: 66, height: 3)
+                        Text("\(context.openTaskCount) open · \(context.doneTaskCount) done")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(TurboTheme.mutedInk)
+                    }
                 }
-
-                Text(context.project.outcome)
-                    .font(.caption)
-                    .foregroundStyle(TurboTheme.mutedInk)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
-
-                TurboProgressBar(value: context.completionPercent, tint: context.jobColor)
-                    .frame(height: 3)
-
-                HStack(spacing: 8) {
-                    Text("\(context.openTaskCount) open")
-                    Text("·")
-                    Text("\(context.doneTaskCount) done")
-                }
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(TurboTheme.mutedInk)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(TurboTheme.cardFill.opacity(0.92))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(
-                                strokeColor,
-                                lineWidth: isSelected || isTypeaheadFocus ? 2 : 1
-                            )
-                    )
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? TurboTheme.rowSelected : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(strokeColor, lineWidth: isSelected || isTypeaheadFocus ? 1 : 0)
             )
         }
         .buttonStyle(.plain)
@@ -721,13 +730,9 @@ private struct PortfolioProjectTile: View {
     }
 
     private var strokeColor: Color {
-        if isSelected {
-            return context.jobColor.opacity(0.5)
-        }
-        if isTypeaheadFocus {
-            return TurboTheme.ink.opacity(0.35)
-        }
-        return TurboTheme.cardStroke.opacity(0.5)
+        if isSelected { return TurboTheme.cardStroke.opacity(0.7) }
+        if isTypeaheadFocus { return TurboTheme.ink.opacity(0.3) }
+        return Color.clear
     }
 }
 
@@ -777,11 +782,11 @@ private struct PortfolioInspector: View {
                             )
                         )
                         .textFieldStyle(.plain)
-                        .font(.headline.weight(.semibold))
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(TurboTheme.ink)
 
                         TextField(
-                            "Outcome",
+                            "Outcome — what done looks like",
                             text: Binding(
                                 get: { context.project.outcome },
                                 set: { o in
@@ -795,75 +800,97 @@ private struct PortfolioInspector: View {
                             axis: .vertical
                         )
                         .textFieldStyle(.plain)
-                        .font(.caption)
+                        .font(.system(size: 12.5))
                         .foregroundStyle(TurboTheme.mutedInk)
-                        .lineLimit(3...6)
+                        .lineLimit(1...5)
                     }
                 }
+
+                TurboProgressBar(value: context.completionPercent, tint: context.jobColor)
+                    .frame(height: 4)
+
+                Rectangle().fill(TurboTheme.divider.opacity(0.6)).frame(height: 1)
 
                 HStack {
-                    Text("Tasks")
-                        .font(.caption.weight(.semibold))
+                    Text("TASKS")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(0.8)
                         .foregroundStyle(TurboTheme.mutedInk)
+                    Text("\(tasks.count)")
+                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                        .foregroundStyle(TurboTheme.mutedInk.opacity(0.7))
                     Spacer()
-                    Button("Add") {
+                    Button {
                         store.select(.project(jobID: context.jobID, projectID: context.project.id))
                         store.openComposer(.task)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(TurboTheme.mutedInk)
+                            .frame(width: 24, height: 24)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(TurboTheme.nestedCardFill)
+                                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(TurboTheme.cardStroke.opacity(0.7), lineWidth: 1))
+                            )
                     }
-                    .font(.caption.weight(.semibold))
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
+                    .help("New task in this project")
                 }
 
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(tasks) { tctx in
-                        PortfolioTaskRow(
-                            context: tctx,
-                            drag: drag,
-                            onSelect: { store.selectTask(tctx) },
-                            onToggleNow: { store.toggleTaskNow(tctx) },
-                            onEditDates: { onEditDates(tctx) },
-                            onEditTask: { onEditTask(tctx) }
-                        )
-                        .environmentObject(store)
-                        .overlay(alignment: .top) {
-                            if drag.draggedID != nil, !drag.hoverIsEnd, drag.hoverTargetID == tctx.task.id {
-                                ReorderDropLine()
+                if tasks.isEmpty {
+                    Text("No tasks yet.")
+                        .font(.caption)
+                        .foregroundStyle(TurboTheme.mutedInk.opacity(0.7))
+                        .padding(.vertical, 8)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(tasks) { tctx in
+                            PortfolioTaskRow(
+                                context: tctx,
+                                drag: drag,
+                                onSelect: { store.selectTask(tctx) },
+                                onToggleNow: { store.toggleTaskNow(tctx) },
+                                onEditDates: { onEditDates(tctx) },
+                                onEditTask: { onEditTask(tctx) }
+                            )
+                            .environmentObject(store)
+                            .overlay(alignment: .top) {
+                                if drag.draggedID != nil, !drag.hoverIsEnd, drag.hoverTargetID == tctx.task.id {
+                                    ReorderDropLine()
+                                }
+                            }
+                            .onDrop(of: [.text], delegate: RowReorderDropDelegate(rowID: tctx.task.id, drag: drag) { movingID in
+                                store.reorderProjectTask(context.jobID, projectID: context.project.id, movingTaskID: movingID, before: tctx.task.id)
+                            })
+                            if tctx.task.id != tasks.last?.task.id {
+                                Divider().opacity(0.35)
                             }
                         }
-                        .onDrop(of: [.text], delegate: RowReorderDropDelegate(rowID: tctx.task.id, drag: drag) { movingID in
-                            store.reorderProjectTask(context.jobID, projectID: context.project.id, movingTaskID: movingID, before: tctx.task.id)
-                        })
-                        if tctx.task.id != tasks.last?.task.id {
-                            Divider().opacity(0.35)
-                        }
-                    }
 
-                    Color.clear
-                        .frame(maxWidth: .infinity).frame(height: 14)
-                        .contentShape(Rectangle())
-                        .overlay(alignment: .top) {
-                            if drag.draggedID != nil, drag.hoverIsEnd { ReorderDropLine() }
-                        }
-                        .onDrop(of: [.text], delegate: EndReorderDropDelegate(drag: drag) { movingID in
-                            store.reorderProjectTaskToEnd(context.jobID, projectID: context.project.id, movingTaskID: movingID)
-                        })
+                        Color.clear
+                            .frame(maxWidth: .infinity).frame(height: 14)
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .top) {
+                                if drag.draggedID != nil, drag.hoverIsEnd { ReorderDropLine() }
+                            }
+                            .onDrop(of: [.text], delegate: EndReorderDropDelegate(drag: drag) { movingID in
+                                store.reorderProjectTaskToEnd(context.jobID, projectID: context.project.id, movingTaskID: movingID)
+                            })
+                    }
                 }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(TurboTheme.cardStroke.opacity(0.4), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                Rectangle().fill(TurboTheme.divider.opacity(0.6)).frame(height: 1)
 
                 Button("Delete project…", role: .destructive) {
                     onRequestDeleteProject()
                 }
-                .font(.caption.weight(.semibold))
-                .buttonStyle(.borderless)
+                .font(.system(size: 12, weight: .medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(TurboTheme.danger)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 6)
             }
-            .padding(12)
+            .padding(.vertical, 2)
         }
     }
 }
